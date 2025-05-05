@@ -151,21 +151,15 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
 
     // --- First Scrape: Main Tide Table ---
     // Updated selector based on user request (derived from XPath)
-    const tideTableSelector = 'body > section > div:nth-child(4) > div > div:nth-child(1) > div:nth-child(4) > div:nth-child(1) > table';
-    const tideTable = document.querySelector(tideTableSelector);
+    // Targets the specific table body now
+    const tideTableBodySelector = 'body > section > div:nth-child(4) > div > div:nth-child(1) > div:nth-child(4) > div:nth-child(1) > table > tbody';
+    const tableBody = document.querySelector(tideTableBodySelector);
     const dailyTides: DailyTideInfo[] = [];
     const locationHeader = document.querySelector('h1')?.textContent?.trim() ?? null; // Scrape H1 header
 
-    if (!tideTable) {
-      console.warn(`[Service] Tide table ('${tideTableSelector}') not found on ${url}. Assuming invalid city/state or page structure change.`);
-      // Return structure indicating no table found, but include header if possible
-      return { dailyTides: [], pageContextText: null, locationHeader };
-    }
-
-    // Find the tbody within the selected table
-    const tableBody = tideTable.querySelector('tbody');
     if (!tableBody) {
-        console.warn(`[Service] Found table ('${tideTableSelector}') but it has no tbody element on ${url}.`);
+        console.warn(`[Service] Tide table body ('${tideTableBodySelector}') not found on ${url}. Assuming invalid city/state or page structure change.`);
+        // Return structure indicating no table found, but include header if possible
         return { dailyTides: [], pageContextText: null, locationHeader };
     }
 
@@ -188,7 +182,7 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
 
       const cells = row.querySelectorAll('td');
       // Expecting 8 cells in the main data row (day, moon, sun, tide1, tide2, tide3, tide4, coefficient)
-      // Note: The 'Atividade Média' cell is also present but we use the coefficient cell (index 7)
+      // Note: The 'Atividade Média' cell (index 8 in original HTML) is also present but we use the coefficient cell (index 7)
       if (cells.length < 8) {
           console.warn(`[Service] Skipping data row ${index + 1} due to insufficient cells (${cells.length}). Expected at least 8. Row HTML:`, row.innerHTML);
           return; // Skip this row
@@ -199,22 +193,35 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
       const dayOfMonth = dayOfMonthStr ? parseInt(dayOfMonthStr, 10) : NaN;
       const dayOfWeek = cells[0]?.querySelector('.tabla_mareas_dia_dia')?.textContent?.trim() ?? '';
 
-      // Handle Moon phase - prefer image, fallback might be needed if site changes
-      const moonPhaseImg = cells[1]?.querySelector('img');
-      let moonPhaseIconSrc = moonPhaseImg?.getAttribute('src') ?? null;
-      // If src is relative, make it absolute
-      if (moonPhaseIconSrc && !moonPhaseIconSrc.startsWith('http')) {
-          moonPhaseIconSrc = `${BASE_URL}${moonPhaseIconSrc}`;
-      }
-       // Fallback: Check for span class if image not found (less reliable)
-      if (!moonPhaseIconSrc) {
-          const moonSpan = cells[1]?.querySelector('span[class*="icon-hs"]'); // Look for spans with icon classes
-          if (moonSpan) {
-              // Cannot reliably get an image SRC from this, maybe log the class?
-              console.warn(`[Service] Moon phase image not found for day ${dayOfMonthStr}, found span class: ${moonSpan.className}`);
-              // Set to null or a placeholder if needed
-              moonPhaseIconSrc = null; // Or some default placeholder?
+       // Handle Moon phase - prioritize image
+      const moonCell = cells[1]; // The second cell
+      let moonPhaseIconSrc: string | null = null;
+      if (moonCell) {
+          // Try finding the image within the cell
+          const moonPhaseImg = moonCell.querySelector('img');
+          if (moonPhaseImg) {
+              let src = moonPhaseImg.getAttribute('src') || moonPhaseImg.getAttribute('data-src'); // Check both src and data-src
+              if (src) {
+                  // If src is relative, make it absolute
+                  if (!src.startsWith('http') && !src.startsWith('data:')) {
+                      try {
+                           const url = new URL(src, BASE_URL);
+                           moonPhaseIconSrc = url.toString();
+                      } catch (e) {
+                           console.warn(`[Service] Invalid relative URL for moon phase image on day ${dayOfMonthStr}: '${src}'`);
+                           moonPhaseIconSrc = null; // Invalid URL
+                      }
+                  } else {
+                      moonPhaseIconSrc = src; // Already absolute or data URI
+                  }
+              } else {
+                   console.warn(`[Service] Moon phase image found for day ${dayOfMonthStr}, but 'src' or 'data-src' attribute is missing or empty.`);
+              }
+          } else {
+               console.warn(`[Service] Moon phase image tag ('img') not found in the moon cell for day ${dayOfMonthStr}.`);
           }
+      } else {
+           console.warn(`[Service] Moon phase cell (index 1) not found for day ${dayOfMonthStr}.`);
       }
 
 
