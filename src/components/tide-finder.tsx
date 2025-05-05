@@ -1,259 +1,355 @@
+/**
+ * @fileOverview TideFinder component for selecting location and displaying tide data.
+ */
 "use client";
 
-import type { ChangeEvent } from "react";
-import { useState, useEffect, useTransition } from "react";
+import { useState, useEffect, useTransition, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, MapPin, Waves, AlertTriangle } from "lucide-react";
-import type { TideData } from "@/services/tabua-de-mares";
-import { fetchTideDataAction } from "@/app/actions"; // Import the server action
-import { useToast } from "@/hooks/use-toast"; // Import useToast
+import { Loader2, MapPin, Waves, AlertTriangle, ServerCrash, List } from "lucide-react";
+import type { TideData, StateInfo, CityInfo } from "@/services/tabua-de-mares";
+import { fetchTideDataAction, fetchStatesAction, fetchCitiesAction } from "@/app/actions"; // Import server actions
+import { useToast } from "@/hooks/use-toast";
 
-// Comprehensive list of Brazilian states and relevant coastal/river cities for tide data
-const locations: { [key: string]: string[] } = {
-  "Alagoas": ["Maceió", "Maragogi", "Barra de São Miguel"],
-  "Amapá": ["Macapá", "Oiapoque", "Santana"],
-  "Amazonas": ["Manaus", "Parintins", "Itacoatiara", "Tefé"], // Major river ports
-  "Bahia": ["Salvador", "Porto Seguro", "Ilhéus", "Itacaré", "Caravelas", "Valença", "Prado"],
-  "Ceará": ["Fortaleza", "Jericoacoara", "Canoa Quebrada", "Camocim", "Icapuí", "Aracati"],
-  "Espírito Santo": ["Vitória", "Guarapari", "Vila Velha", "Aracruz", "São Mateus", "Conceição da Barra"],
-  "Maranhão": ["São Luís", "Alcântara", "Barreirinhas", "Tutóia", "Raposa"],
-  "Pará": ["Belém", "Salinópolis", "Santarém", "Marabá", "Soure", "Vigia", "Bragança", "Mosqueiro"],
-  "Paraíba": ["João Pessoa", "Cabedelo", "Pitimbu", "Baía da Traição"],
-  "Paraná": ["Paranaguá", "Guaratuba", "Matinhos", "Antonina", "Pontal do Paraná"],
-  "Pernambuco": ["Recife", "Olinda", "Porto de Galinhas", "Fernando de Noronha", "Ipojuca", "Cabo de Santo Agostinho", "Tamandaré", "Goiana"],
-  "Piauí": ["Parnaíba", "Luís Correia", "Cajueiro da Praia"],
-  "Rio de Janeiro": ["Rio de Janeiro", "Niterói", "Arraial do Cabo", "Búzios", "Angra dos Reis", "Paraty", "Macaé", "Cabo Frio", "Mangaratiba", "Sepetiba"],
-  "Rio Grande do Norte": ["Natal", "Pipa", "Mossoró", "Galinhos", "São Miguel do Gostoso", "Tibau do Sul"],
-  "Rio Grande do Sul": ["Rio Grande", "Tramandaí", "Torres", "Pelotas", "São José do Norte", "Cassino"],
-  "Rondônia": ["Porto Velho"], // Major river port
-  "Santa Catarina": ["Florianópolis", "Balneário Camboriú", "Itajaí", "São Francisco do Sul", "Imbituba", "Laguna", "Itapoá", "Bombinhas"],
-  "São Paulo": ["Santos", "Ubatuba", "Guarujá", "São Sebastião", "Ilhabela", "Cananéia", "Bertioga", "Caraguatatuba", "Iguape"],
-  "Sergipe": ["Aracaju", "Estância", "Pirambu"],
-  "Tocantins": ["Palmas"], // Capital on Palmas River (Tocantins River tributary)
-  // States generally without significant tide locations (coastal/major river):
-  // Acre, Distrito Federal, Goiás, Mato Grosso, Mato Grosso do Sul, Minas Gerais, Roraima
-};
-
-
-const states = Object.keys(locations).sort(); // Sort states alphabetically
+const LOCALSTORAGE_STATE_SLUG_KEY = "selectedStateSlug";
+const LOCALSTORAGE_CITY_SLUG_KEY = "selectedCitySlug";
 
 export default function TideFinder() {
-  const [selectedState, setSelectedState] = useState<string>("");
-  const [selectedCity, setSelectedCity] = useState<string>("");
-  const [cities, setCities] = useState<string[]>([]);
+  // Location Selection State
+  const [states, setStates] = useState<StateInfo[]>([]);
+  const [selectedStateSlug, setSelectedStateSlug] = useState<string>("");
+  const [cities, setCities] = useState<CityInfo[]>([]);
+  const [selectedCitySlug, setSelectedCitySlug] = useState<string>("");
+
+  // Data & UI State
   const [tideData, setTideData] = useState<TideData[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
-  const { toast } = useToast(); // Initialize toast
+  const [isLoadingStates, startLoadingStates] = useTransition();
+  const [isLoadingCities, startLoadingCities] = useTransition();
+  const [isLoadingTides, startLoadingTides] = useTransition();
+  const { toast } = useToast();
 
-  // Load saved location from localStorage on component mount
-  useEffect(() => {
-    const savedState = localStorage.getItem("selectedState");
-    const savedCity = localStorage.getItem("selectedCity");
+  // --- Data Fetching ---
 
-    let initialState = "";
-    if (savedState && locations[savedState]) {
-        initialState = savedState;
-    } else if (states.length > 0) {
-        // Default to a common coastal state like Rio de Janeiro or São Paulo if no saved state
-        initialState = states.includes("Rio de Janeiro") ? "Rio de Janeiro" : states[0];
-    }
-
-    if (initialState) {
-        setSelectedState(initialState);
-        const initialCities = locations[initialState] || [];
-        setCities(initialCities);
-        if (savedCity && initialCities.includes(savedCity)) {
-            setSelectedCity(savedCity);
-            // Optionally auto-fetch data if both state and city were saved
-            // handleFetchTides(initialState, savedCity); // Be mindful of initial load performance
-        } else if (initialCities.length > 0) {
-            // Optionally select the first city if only state was saved or city was invalid
-            // setSelectedCity(initialCities[0]);
+  // Fetch States
+  const loadStates = useCallback(() => {
+    console.log("Initiating state fetch...");
+    setError(null); // Clear previous errors
+    startLoadingStates(async () => {
+      const fetchedStates = await fetchStatesAction();
+      if (fetchedStates) {
+        setStates(fetchedStates);
+        console.log(`Loaded ${fetchedStates.length} states.`);
+        // Try to restore saved state selection after states are loaded
+        const savedStateSlug = localStorage.getItem(LOCALSTORAGE_STATE_SLUG_KEY);
+        if (savedStateSlug && fetchedStates.some(s => s.slug === savedStateSlug)) {
+          console.log(`Restoring saved state: ${savedStateSlug}`);
+          setSelectedStateSlug(savedStateSlug); // This will trigger loadCities via useEffect
+        } else {
+          console.log("No valid saved state found or states list empty.");
+           // Optionally select a default state if desired
+           // if (fetchedStates.length > 0) setSelectedStateSlug(fetchedStates[0].slug);
         }
-    }
+      } else {
+        setError("Não foi possível carregar a lista de estados. Verifique sua conexão ou tente novamente.");
+        toast({ title: "Erro ao Carregar Estados", description: "A lista de estados não pôde ser obtida.", variant: "destructive" });
+      }
+    });
+  }, [toast]); // Added toast dependency
 
-  }, []); // Empty dependency array ensures this runs only once on mount
+  // Fetch Cities when State changes
+  const loadCities = useCallback((stateSlug: string) => {
+    if (!stateSlug) {
+      setCities([]);
+      setSelectedCitySlug(""); // Clear city selection
+      localStorage.removeItem(LOCALSTORAGE_CITY_SLUG_KEY);
+      return;
+    };
+    console.log(`Initiating city fetch for state: ${stateSlug}`);
+    setError(null); // Clear previous errors
+    setTideData(null); // Clear old tide data
+    startLoadingCities(async () => {
+      const fetchedCities = await fetchCitiesAction(stateSlug);
+      if (fetchedCities) {
+        setCities(fetchedCities);
+         console.log(`Loaded ${fetchedCities.length} cities for ${stateSlug}.`);
+        // Try to restore saved city selection after cities are loaded
+        const savedCitySlug = localStorage.getItem(LOCALSTORAGE_CITY_SLUG_KEY);
+         const currentSelectedState = localStorage.getItem(LOCALSTORAGE_STATE_SLUG_KEY);
+        // Only restore city if it belongs to the currently selected state
+        if (stateSlug === currentSelectedState && savedCitySlug && fetchedCities.some(c => c.slug === savedCitySlug)) {
+           console.log(`Restoring saved city: ${savedCitySlug} for state ${stateSlug}`);
+          setSelectedCitySlug(savedCitySlug);
+          // Optionally auto-fetch tides here if both restored
+          // handleFetchTides(stateSlug, savedCitySlug);
+        } else {
+             console.log(`No valid saved city for ${stateSlug} or state changed.`);
+            setSelectedCitySlug(""); // Clear city if saved one doesn't match or state changed
+            localStorage.removeItem(LOCALSTORAGE_CITY_SLUG_KEY);
+            // Optionally select the first city if desired
+            // if (fetchedCities.length > 0) setSelectedCitySlug(fetchedCities[0].slug);
+        }
+      } else {
+        setError(`Não foi possível carregar a lista de cidades para o estado selecionado. O estado pode não ter cidades suportadas ou ocorreu um erro.`);
+        setCities([]); // Ensure cities array is empty on error
+        setSelectedCitySlug(""); // Clear city selection on error
+        toast({ title: "Erro ao Carregar Cidades", description: "A lista de cidades não pôde ser obtida.", variant: "destructive" });
+      }
+    });
+  }, [toast]); // Added toast dependency
 
-  // Update cities when state changes and save to localStorage
-  const handleStateChange = (value: string) => {
-    setSelectedState(value);
-    const newCities = locations[value] || [];
-    setCities(newCities.sort()); // Sort cities alphabetically
-    setSelectedCity(""); // Reset city when state changes
-    setTideData(null); // Clear previous results
-    setError(null);
-    localStorage.setItem("selectedState", value);
-    localStorage.removeItem("selectedCity"); // Remove old city on state change
-  };
-
-  // Save city to localStorage
-  const handleCityChange = (value: string) => {
-    setSelectedCity(value);
-    setTideData(null); // Clear previous results
-    setError(null);
-    if (value) {
-      localStorage.setItem("selectedCity", value);
-    } else {
-      localStorage.removeItem("selectedCity");
-    }
-  };
-
-  // Fetch tide data using server action
-  const handleFetchTides = (stateToFetch = selectedState, cityToFetch = selectedCity) => {
+  // Fetch Tide Data
+  const handleFetchTides = (stateToFetch = selectedStateSlug, cityToFetch = selectedCitySlug) => {
     if (!stateToFetch || !cityToFetch) {
       setError("Por favor, selecione um estado e uma cidade.");
-      toast({ // Add toast notification
-        title: "Seleção Incompleta",
-        description: "Por favor, selecione um estado e uma cidade.",
-        variant: "destructive",
-      });
+      toast({ title: "Seleção Incompleta", description: "Estado e cidade são necessários.", variant: "destructive" });
       return;
     }
+    console.log(`Initiating tide data fetch for: ${cityToFetch}, ${stateToFetch}`);
     setError(null);
     setTideData(null);
 
-    startTransition(async () => {
-      try {
-        const data = await fetchTideDataAction(stateToFetch, cityToFetch);
-        if (!data || data.length === 0) {
-          setError("Não foi possível obter os dados da maré para esta localização. O serviço pode estar indisponível, a cidade não é suportada, ou não há dados para hoje.");
-           toast({
-            title: "Erro ao buscar dados",
-            description: "Não foi possível obter os dados da maré. Verifique a seleção ou tente mais tarde.",
-            variant: "destructive",
-          });
-        } else {
-          setTideData(data);
-           toast({
-            title: "Dados da maré carregados!",
-            description: `Tábua de marés para ${cityToFetch}, ${stateToFetch}.`,
-          });
-        }
-      } catch (err) {
-        console.error("Error fetching tide data:", err);
-        setError("Ocorreu um erro ao buscar os dados da maré. Tente novamente mais tarde.");
-        toast({ // Add toast notification for fetch error
-            title: "Erro de Rede",
-            description: "Não foi possível conectar ao serviço de tábua de marés.",
-            variant: "destructive",
-          });
+    startLoadingTides(async () => {
+      const data = await fetchTideDataAction(stateToFetch, cityToFetch);
+      if (data === null) { // Explicitly check for null, indicating a fetch/server error
+        setError("Ocorreu um erro ao buscar os dados da maré. O serviço pode estar indisponível ou ocorreu um problema no servidor.");
+        toast({ title: "Erro de Rede/Servidor", description: "Não foi possível buscar os dados da maré.", variant: "destructive" });
+      } else if (data.length === 0) { // Empty array means scraping was successful but found no data (e.g., table empty, city not coastal)
+        setError("Não foram encontrados dados de maré para esta localização. Verifique se é uma cidade costeira ou com dados disponíveis.");
+        setTideData([]); // Set to empty array to indicate "no data found" vs "error"
+        toast({ title: "Dados Não Encontrados", description: `Nenhuma informação de maré para ${getSelectedCityName(cityToFetch)}, ${getSelectedStateName(stateToFetch)}.`, variant: "default" });
+      } else {
+        setTideData(data);
+        toast({ title: "Dados Carregados!", description: `Tábua de marés para ${getSelectedCityName(cityToFetch)}, ${getSelectedStateName(stateToFetch)}.`, });
       }
     });
   };
 
+  // --- Effects ---
+
+  // Load states on initial mount
+  useEffect(() => {
+    loadStates();
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Load states only once
+
+  // Load cities when selectedStateSlug changes
+  useEffect(() => {
+    if (selectedStateSlug) {
+      loadCities(selectedStateSlug);
+    } else {
+      setCities([]); // Clear cities if state is deselected
+      setSelectedCitySlug("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStateSlug]); // Trigger city load only when state changes
+
+
+  // --- Event Handlers ---
+
+  const handleStateChange = (value: string) => {
+    console.log(`State selected: ${value}`);
+    setSelectedStateSlug(value);
+    setSelectedCitySlug(""); // Reset city when state changes
+    setTideData(null); // Clear previous results
+    setError(null);
+    localStorage.setItem(LOCALSTORAGE_STATE_SLUG_KEY, value);
+    localStorage.removeItem(LOCALSTORAGE_CITY_SLUG_KEY); // Remove old city on state change
+    // City loading is handled by useEffect watching selectedStateSlug
+  };
+
+  const handleCityChange = (value: string) => {
+    console.log(`City selected: ${value}`);
+    setSelectedCitySlug(value);
+    setTideData(null); // Clear previous results
+    setError(null);
+    if (value) {
+      localStorage.setItem(LOCALSTORAGE_CITY_SLUG_KEY, value);
+    } else {
+      localStorage.removeItem(LOCALSTORAGE_CITY_SLUG_KEY);
+    }
+  };
+
+  // --- Helper Functions ---
+   const getSelectedStateName = (slug: string): string => states.find(s => s.slug === slug)?.name || slug;
+   const getSelectedCityName = (slug: string): string => cities.find(c => c.slug === slug)?.name || slug;
+
+   // --- Render Logic ---
+   const showStateSelector = !isLoadingStates || states.length > 0;
+   const showCitySelector = !isLoadingCities || cities.length > 0;
+   const isDataLoading = isLoadingStates || isLoadingCities || isLoadingTides;
+   const canFetchTides = selectedStateSlug && selectedCitySlug && !isDataLoading;
+   const showNoTidesFoundMessage = tideData && tideData.length === 0 && !isDataLoading && !error;
+   const showInitialPrompt = tideData === null && !isDataLoading && !error && (!selectedStateSlug || !selectedCitySlug);
+   const showReadyToFetchPrompt = tideData === null && !isDataLoading && !error && selectedStateSlug && selectedCitySlug;
+
+
   return (
-    <Card className="w-full max-w-2xl shadow-lg">
-      <CardHeader>
+    <Card className="w-full max-w-2xl shadow-lg rounded-xl">
+      <CardHeader className="pb-4">
         <CardTitle className="flex items-center gap-2 text-2xl text-primary">
           <MapPin />
           Selecione a Localização
         </CardTitle>
-         <CardDescription>
-          Escolha o estado e a cidade para ver a tábua de marés diária. A fonte dos dados é <a href="https://tabuademares.com/" target="_blank" rel="noopener noreferrer" className="text-primary underline hover:text-primary/80">tabuademares.com</a>.
+        <CardDescription>
+          Escolha o estado e a cidade para ver a tábua de marés. Dados de <a href="https://tabuademares.com/" target="_blank" rel="noopener noreferrer" className="text-primary underline hover:text-primary/80">tabuademares.com</a>.
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2">
-          {/* State Selector */}
-          <div className="space-y-2">
-            <label htmlFor="state-select" className="text-sm font-medium">Estado</label>
-            <Select
-              value={selectedState}
-              onValueChange={handleStateChange}
-            >
-              <SelectTrigger id="state-select">
-                <SelectValue placeholder="Selecione o Estado" />
-              </SelectTrigger>
-              <SelectContent>
-                {states.map((state) => (
-                  <SelectItem key={state} value={state}>
-                    {state}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        {/* Loading States Indicator */}
+        {isLoadingStates && (
+            <div className="flex items-center justify-center py-4 text-muted-foreground">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Carregando estados...
+            </div>
+        )}
 
-          {/* City Selector */}
-          <div className="space-y-2">
-            <label htmlFor="city-select" className="text-sm font-medium">Cidade</label>
-            <Select
-              value={selectedCity}
-              onValueChange={handleCityChange}
-              disabled={!selectedState || cities.length === 0}
-            >
-              <SelectTrigger id="city-select">
-                <SelectValue placeholder={selectedState && cities.length === 0 ? "Nenhuma cidade relevante encontrada" : "Selecione a Cidade"} />
-              </SelectTrigger>
-              <SelectContent>
-                {cities.map((city) => (
-                  <SelectItem key={city} value={city}>
-                    {city}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+        {/* State Selector */}
+         {showStateSelector && (
+             <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                 <div className="space-y-1">
+                    <label htmlFor="state-select" className="text-sm font-medium text-foreground/80">Estado</label>
+                    <Select
+                    value={selectedStateSlug}
+                    onValueChange={handleStateChange}
+                    disabled={isLoadingStates || states.length === 0}
+                    >
+                    <SelectTrigger id="state-select" aria-label="Selecionar Estado">
+                        <SelectValue placeholder={isLoadingStates ? "Carregando..." : "Selecione o Estado"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {states.map((state) => (
+                        <SelectItem key={state.slug} value={state.slug}>
+                            {state.name}
+                        </SelectItem>
+                        ))}
+                    </SelectContent>
+                    </Select>
+                </div>
+
+                 {/* City Selector */}
+                 <div className="space-y-1">
+                     <label htmlFor="city-select" className="text-sm font-medium text-foreground/80">Cidade</label>
+                     <Select
+                         value={selectedCitySlug}
+                         onValueChange={handleCityChange}
+                         disabled={!selectedStateSlug || isLoadingCities || cities.length === 0}
+                     >
+                         <SelectTrigger id="city-select" aria-label="Selecionar Cidade">
+                         <SelectValue placeholder={
+                             !selectedStateSlug ? "Selecione um estado primeiro" :
+                             isLoadingCities ? "Carregando cidades..." :
+                             cities.length === 0 ? "Nenhuma cidade encontrada" :
+                             "Selecione a Cidade"
+                             } />
+                         </SelectTrigger>
+                         <SelectContent>
+                         {cities.map((city) => (
+                             <SelectItem key={city.slug} value={city.slug}>
+                             {city.name}
+                             </SelectItem>
+                         ))}
+                         </SelectContent>
+                     </Select>
+                      {isLoadingCities && (
+                          <p className="text-xs text-muted-foreground flex items-center pt-1">
+                              <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Buscando cidades...
+                          </p>
+                      )}
+                 </div>
+             </div>
+         )}
+
 
         <Button
-            onClick={() => handleFetchTides()} // Pass state/city explicitly if needed from elsewhere
-            disabled={!selectedState || !selectedCity || isPending}
-            className="w-full bg-primary hover:bg-primary/90"
+            onClick={() => handleFetchTides()}
+            disabled={!canFetchTides}
+            className="w-full bg-primary hover:bg-primary/90 mt-2 rounded-lg"
+            aria-live="polite"
         >
-          {isPending ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          {isLoadingTides ? (
+            <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Buscando Marés...</>
           ) : (
-            <Waves className="mr-2 h-4 w-4" />
+            <><Waves className="mr-2 h-4 w-4" /> Ver Tábua de Marés</>
           )}
-          {isPending ? "Buscando..." : "Ver Tábua de Marés"}
         </Button>
 
+        {/* Error Display */}
         {error && (
-          <Alert variant="destructive" className="mt-6">
+          <Alert variant="destructive" className="mt-6 rounded-lg">
              <AlertTriangle className="h-4 w-4" />
             <AlertTitle>Erro</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
 
-        {tideData && tideData.length > 0 && (
+         {/* Loading Tides Indicator */}
+        {isLoadingTides && (
+            <div className="mt-8 flex items-center justify-center py-4 text-muted-foreground">
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Carregando dados da maré...
+            </div>
+        )}
+
+
+        {/* Tide Data Table */}
+        {tideData && tideData.length > 0 && !isLoadingTides && (
           <div className="mt-8">
             <h2 className="mb-4 text-xl font-semibold flex items-center gap-2">
-               <Waves className="text-primary"/> Tábua de Marés para {selectedCity}, {selectedState} (Hoje)
+               <Waves className="text-primary"/> Tábua de Marés para {getSelectedCityName(selectedCitySlug)}, {getSelectedStateName(selectedStateSlug)} (Hoje)
             </h2>
-            <Table>
+            <Table className="rounded-md border">
               <TableHeader>
                 <TableRow>
-                  <TableHead>Hora</TableHead>
+                  <TableHead className="w-[100px]">Hora</TableHead>
                   <TableHead className="text-right">Altura (Metros)</TableHead>
+                  {/* Optional: Add Type (High/Low) if available */}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {tideData.map((data, index) => (
                   <TableRow key={index}>
-                    <TableCell>{data.time}</TableCell>
-                    <TableCell className="text-right font-medium">{data.height}</TableCell>
+                    <TableCell className="font-medium">{data.time}</TableCell>
+                    <TableCell className="text-right">{data.height}m</TableCell>
+                     {/* Optional: Add Type cell */}
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
+             <p className="text-xs text-muted-foreground mt-2 text-center">Valores de altura aproximados.</p>
           </div>
         )}
-         {tideData === null && !isPending && !error && selectedState && selectedCity && (
-             <div className="mt-8 text-center text-muted-foreground">
-                 Clique no botão acima para carregar os dados da maré para {selectedCity}, {selectedState}.
+
+        {/* Informational Messages */}
+         {showNoTidesFoundMessage && (
+             <Alert className="mt-6 rounded-lg">
+                 <List className="h-4 w-4"/>
+                 <AlertTitle>Sem Dados de Maré</AlertTitle>
+                 <AlertDescription>
+                    Não foram encontrados dados de maré para {getSelectedCityName(selectedCitySlug)}, {getSelectedStateName(selectedStateSlug)}. Isso pode ocorrer se a cidade não for costeira ou se não houver dados disponíveis no serviço de origem.
+                 </AlertDescription>
+             </Alert>
+         )}
+          {showReadyToFetchPrompt && (
+             <div className="mt-6 text-center text-muted-foreground py-4 px-2 border border-dashed rounded-lg">
+                 Clique no botão <span className="font-medium">"Ver Tábua de Marés"</span> para carregar os dados para <span className="font-medium">{getSelectedCityName(selectedCitySlug)}, {getSelectedStateName(selectedStateSlug)}</span>.
              </div>
          )}
-         {tideData === null && !isPending && !error && (!selectedState || !selectedCity) && (
-             <div className="mt-8 text-center text-muted-foreground">
-                 Selecione um estado e uma cidade para buscar a tábua de marés.
+         {showInitialPrompt && states.length > 0 && ( // Show only if states loaded
+             <div className="mt-6 text-center text-muted-foreground py-4 px-2 border border-dashed rounded-lg">
+                 Selecione um estado e uma cidade acima para buscar a tábua de marés.
              </div>
+         )}
+         {/* Handles the case where state fetching failed initially */}
+         {states.length === 0 && !isLoadingStates && error && (
+             <Alert variant="destructive" className="mt-6 rounded-lg">
+                 <ServerCrash className="h-4 w-4"/>
+                 <AlertTitle>Falha ao Carregar Dados Iniciais</AlertTitle>
+                 <AlertDescription>
+                    Não foi possível carregar a lista de estados necessária para continuar. Por favor, recarregue a página ou tente novamente mais tarde.
+                 </AlertDescription>
+             </Alert>
          )}
       </CardContent>
     </Card>
