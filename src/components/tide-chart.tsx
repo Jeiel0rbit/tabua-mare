@@ -11,13 +11,12 @@ import {
   ChartConfig,
 } from "@/components/ui/chart";
 import {
-  LineChart,
-  Line,
+  AreaChart, // Changed from LineChart
+  Area,      // Changed from Line
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
   ReferenceLine,
   Dot,
@@ -133,7 +132,9 @@ export default function TideChart({ tideData, monthYear, tideChartSvg }: TideCha
   const minY = Math.min(...heights);
   const maxY = Math.max(...heights);
   const yDomainPadding = 0.2; // Add some padding
-  const yDomain = [Math.floor(minY - yDomainPadding), Math.ceil(maxY + yDomainPadding)];
+  // Ensure minY isn't higher than 0 if all tides are positive
+  const yDomain = [Math.min(0, Math.floor(minY - yDomainPadding)), Math.ceil(maxY + yDomainPadding)];
+
 
   // Format X-axis ticks to show Day/Time
   const formatXAxis = (tickItem: Date) => {
@@ -147,11 +148,17 @@ export default function TideChart({ tideData, monthYear, tideChartSvg }: TideCha
          <h3 className="text-xl font-semibold text-center mb-4 text-primary">Gráfico de Marés (Interativo)</h3>
         <ChartContainer config={chartConfig} className="aspect-video h-[400px] w-full">
         <ResponsiveContainer width="100%" height="100%">
-            <LineChart
+            <AreaChart // Changed from LineChart
             data={chartData}
             margin={{ top: 5, right: 20, left: -20, bottom: 40 }} // Adjusted margins
             >
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+             <defs>
+                <linearGradient id="tideGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="hsl(var(--chart-1))" stopOpacity={0.8}/>
+                <stop offset="95%" stopColor="hsl(var(--chart-1))" stopOpacity={0.1}/>
+                </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
             <XAxis
                 dataKey="dateTime"
                 tickFormatter={formatXAxis} // Use the custom formatter
@@ -163,8 +170,6 @@ export default function TideChart({ tideData, monthYear, tideChartSvg }: TideCha
                 height={60} // Increase height for angled labels
                 tick={{ fontSize: 10 }} // Smaller font size for ticks
                 interval="preserveStartEnd" // Ensure first and last ticks are shown
-                // Consider dynamically setting ticks if too crowded:
-                // ticks={chartData.map(d => d.dateTime.getTime())} // Show a tick for every data point
                 minTickGap={50} // Minimum gap between ticks
                 />
             <YAxis
@@ -173,12 +178,14 @@ export default function TideChart({ tideData, monthYear, tideChartSvg }: TideCha
                 tickFormatter={(value) => `${value}m`}
                 tick={{ fontSize: 10 }} // Smaller font size for ticks
                 width={40} // Adjust width for Y-axis labels
+                axisLine={false} // Hide Y-axis line for cleaner look
+                tickLine={false} // Hide Y-axis tick lines
             />
             <Tooltip
-                cursor={{ stroke: 'hsl(var(--accent))', strokeWidth: 1 }}
+                cursor={{ stroke: 'hsl(var(--accent))', strokeWidth: 1, fill: 'hsl(var(--accent) / 0.1)' }} // Added fill for cursor
                 content={
                 <ChartTooltipContent
-                    indicator="line"
+                    indicator="dot" // Changed from line to dot to avoid confusion with area line
                     labelFormatter={(label, payload) => {
                     if (payload && payload.length > 0 && payload[0].payload.dateTime) {
                         const date = new Date(payload[0].payload.dateTime);
@@ -199,37 +206,37 @@ export default function TideChart({ tideData, monthYear, tideChartSvg }: TideCha
                 />
                 }
             />
-            <Line
+            <Area // Changed from Line
                 type="monotone"
                 dataKey="height"
-                stroke="hsl(var(--chart-1))" // Primary color
+                stroke="hsl(var(--chart-1))" // Primary color for the line on top of the area
                 strokeWidth={2}
+                fillOpacity={1}
+                fill="url(#tideGradient)" // Apply gradient fill
                 dot={(props) => {
-                const { cx, cy, stroke, payload, index } = props as any; // Cast to any to access payload easily
-                const isHighTide = payload.type === 'high';
-                // Use a unique key, combining index and dateTime just to be safe
-                const key = `${index}-${payload.dateTime?.getTime()}`;
-                return (
-                    <Dot
-                      key={key} // Add unique key here
-                      cx={cx}
-                      cy={cy}
-                      r={4} // Dot radius
-                      fill={isHighTide ? "hsl(var(--accent))" : "hsl(var(--chart-1))"} // Coral for high tide, blue for low
-                      stroke={stroke}
-                      strokeWidth={1}
-                    />
-                );
+                    const { cx, cy, stroke, payload, index } = props as any; // Cast to any to access payload easily
+                    const isHighTide = payload.type === 'high';
+                    const key = `${index}-${payload.dateTime?.getTime()}`;
+                    return (
+                        <Dot
+                        key={key}
+                        cx={cx}
+                        cy={cy}
+                        r={4} // Dot radius
+                        fill={isHighTide ? "hsl(var(--accent))" : "hsl(var(--chart-1))"} // Coral for high tide, blue for low
+                        stroke={"hsl(var(--background))"} // Use background color for stroke to make dots pop
+                        strokeWidth={1.5}
+                        />
+                    );
                 }}
-                activeDot={{ r: 6 }}
+                activeDot={{ r: 6, stroke: "hsl(var(--background))", strokeWidth: 2 }} // Style active dot
             />
-            {/* Optional: Add a reference line at 0m */}
+            {/* Reference line at 0m (sea level) */}
             <ReferenceLine y={0} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" />
-            </LineChart>
+            </AreaChart>
         </ResponsiveContainer>
         </ChartContainer>
         <p className="text-xs text-muted-foreground mt-2 text-center">Passe o mouse sobre os pontos para detalhes.</p>
     </div>
   );
 }
-
