@@ -23,8 +23,7 @@ export interface DailyTideInfo {
   dayOfMonth: number;
   /** The abbreviation for the day of the week (e.g., "Qui"). */
   dayOfWeek: string;
-  /** The URL source for the moon phase icon. */
-  moonPhaseIconSrc: string | null;
+  // moonPhaseIconSrc removed as it's no longer needed/reliable
   /** Sunrise time (HH:MM). */
   sunriseTime: string | null;
   /** Sunset time (HH:MM). */
@@ -51,6 +50,8 @@ export interface ScrapedPageData {
   pageContextText: string | null;
    /** The main location header text (e.g., "Tábua de marés de Ananindeua"). */
   locationHeader: string | null;
+  /** The text indicating the month and year of the tide table (e.g., "maio de 2025"). */
+  monthYearText: string | null;
 }
 
 
@@ -117,7 +118,7 @@ function extractTideEvent(cell: Element | null | undefined): TideEvent | null {
     if (time && height) {
         // Basic time format validation (HH:MM)
         if (!/^\d{1,2}:\d{2}$/.test(time)) {
-             console.warn(`[Service] Invalid time format extracted: '${time}'`);
+             // console.warn(`[Service] Invalid time format extracted: '${time}'`); // Reduce noise
              return null;
         }
         return { time, height };
@@ -149,107 +150,84 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
     const dom = new JSDOM(html);
     const document = dom.window.document;
 
-    // --- First Scrape: Main Tide Table ---
-    // Updated selector based on user request (derived from XPath)
-    // Targets the specific table body now
+    // --- Scrape Header, Month/Year ---
+    const locationHeader = document.querySelector('h1')?.textContent?.trim() ?? null;
+    const monthYearText = document.querySelector('.tabla_mareas_copy_fecha')?.textContent?.trim() ?? null; // Scrape Month/Year
+
+
+    // --- Scrape Main Tide Table ---
     const tideTableBodySelector = 'body > section > div:nth-child(4) > div > div:nth-child(1) > div:nth-child(4) > div:nth-child(1) > table > tbody';
     const tableBody = document.querySelector(tideTableBodySelector);
     const dailyTides: DailyTideInfo[] = [];
-    const locationHeader = document.querySelector('h1')?.textContent?.trim() ?? null; // Scrape H1 header
+
+    const defaultReturn: ScrapedPageData = {
+        dailyTides: [],
+        pageContextText: null, // Will be scraped later
+        locationHeader,
+        monthYearText,
+      };
 
     if (!tableBody) {
         console.warn(`[Service] Tide table body ('${tideTableBodySelector}') not found on ${url}. Assuming invalid city/state or page structure change.`);
-        // Return structure indicating no table found, but include header if possible
-        return { dailyTides: [], pageContextText: null, locationHeader };
+        // Need to scrape context even if table fails
+        const contextElementSelector = '#noprint1 > div:nth-child(18) > div:nth-child(3)';
+        const contextElement = document.querySelector(contextElementSelector);
+        defaultReturn.pageContextText = contextElement?.textContent?.trim() ?? null;
+        if (!defaultReturn.pageContextText) {
+            console.warn(`[Service] Context text element ('${contextElementSelector}') also not found on ${url}.`);
+        }
+        return defaultReturn;
     }
 
-    // Get all rows, filter out header/metadata rows based on class or structure if needed
-    // The provided HTML has data rows with class like 'tabla_mareas_fila_fondo2' or 'tabla_mareas_fila_fondo1'
-    // And sometimes a second row per day like 'tabla_mareas_fila_fondo2_2' which we skip.
     const rows = tableBody.querySelectorAll('tr[class^="tabla_mareas_fila tabla_mareas_fila_fondo"]');
     if (rows.length === 0) {
         console.warn(`[Service] Found table tbody but it has no data rows matching selector 'tr[class^="tabla_mareas_fila tabla_mareas_fila_fondo"]' on ${url}.`);
-         // Return structure indicating empty table, but include header if possible
-        return { dailyTides: [], pageContextText: null, locationHeader };
+        // Need to scrape context even if table fails
+        const contextElementSelector = '#noprint1 > div:nth-child(18) > div:nth-child(3)';
+        const contextElement = document.querySelector(contextElementSelector);
+        defaultReturn.pageContextText = contextElement?.textContent?.trim() ?? null;
+        if (!defaultReturn.pageContextText) {
+            console.warn(`[Service] Context text element ('${contextElementSelector}') also not found on ${url}.`);
+        }
+        return defaultReturn;
     }
 
     rows.forEach((row, index) => {
-      // Skip the secondary rows (like tabla_mareas_fila_fondo2_2)
       if (row.classList.contains('tabla_mareas_fila_fondo1_2') || row.classList.contains('tabla_mareas_fila_fondo2_2') || row.classList.contains('tabla_mareas_fila_fondo3_22_2')) {
-          // console.log(`[Service] Skipping row ${index + 1} as it's a secondary info row.`);
           return;
       }
 
       const cells = row.querySelectorAll('td');
-      // Expecting 8 cells in the main data row (day, moon, sun, tide1, tide2, tide3, tide4, coefficient)
-      // Note: The 'Atividade Média' cell (index 8 in original HTML) is also present but we use the coefficient cell (index 7)
       if (cells.length < 8) {
           console.warn(`[Service] Skipping data row ${index + 1} due to insufficient cells (${cells.length}). Expected at least 8. Row HTML:`, row.innerHTML);
-          return; // Skip this row
+          return;
       }
 
-      // Extract data using specific selectors within cells
       const dayOfMonthStr = cells[0]?.querySelector('.tabla_mareas_dia_numero')?.textContent?.trim();
       const dayOfMonth = dayOfMonthStr ? parseInt(dayOfMonthStr, 10) : NaN;
       const dayOfWeek = cells[0]?.querySelector('.tabla_mareas_dia_dia')?.textContent?.trim() ?? '';
 
-       // Handle Moon phase - prioritize image
-      const moonCell = cells[1]; // The second cell
-      let moonPhaseIconSrc: string | null = null;
-      if (moonCell) {
-          // Try finding the image within the cell
-          const moonPhaseImg = moonCell.querySelector('img');
-          if (moonPhaseImg) {
-              let src = moonPhaseImg.getAttribute('src') || moonPhaseImg.getAttribute('data-src'); // Check both src and data-src
-              if (src) {
-                  // If src is relative, make it absolute
-                  if (!src.startsWith('http') && !src.startsWith('data:')) {
-                      try {
-                           const url = new URL(src, BASE_URL);
-                           moonPhaseIconSrc = url.toString();
-                      } catch (e) {
-                           console.warn(`[Service] Invalid relative URL for moon phase image on day ${dayOfMonthStr}: '${src}'`);
-                           moonPhaseIconSrc = null; // Invalid URL
-                      }
-                  } else {
-                      moonPhaseIconSrc = src; // Already absolute or data URI
-                  }
-              } else {
-                   console.warn(`[Service] Moon phase image found for day ${dayOfMonthStr}, but 'src' or 'data-src' attribute is missing or empty.`);
-              }
-          } else {
-               console.warn(`[Service] Moon phase image tag ('img') not found in the moon cell for day ${dayOfMonthStr}.`);
-          }
-      } else {
-           console.warn(`[Service] Moon phase cell (index 1) not found for day ${dayOfMonthStr}.`);
-      }
-
-
-      // Sunrise/Sunset - Extract text, ignore potential icon spans
+      // Sunrise/Sunset
       const sunriseTimeRaw = cells[2]?.querySelector('.tabla_mareas_salida_puesta_sol_salida')?.textContent?.trim();
       const sunsetTimeRaw = cells[2]?.querySelector('.tabla_mareas_salida_puesta_sol_puesta')?.textContent?.trim();
       const sunriseTime = sunriseTimeRaw ? sunriseTimeRaw.match(/\d{1,2}:\d{2}/)?.[0] ?? null : null;
       const sunsetTime = sunsetTimeRaw ? sunsetTimeRaw.match(/\d{1,2}:\d{2}/)?.[0] ?? null : null;
 
-
-      // Parse tides using helper function and specific cell indices
+      // Tides
       const tide1 = extractTideEvent(cells[3]);
       const tide2 = extractTideEvent(cells[4]);
       const tide3 = extractTideEvent(cells[5]);
       const tide4 = extractTideEvent(cells[6]);
 
-      // Coefficient - grab all text content, clean it up
+      // Coefficient
       const coefficientEl = cells[7]?.querySelector('.tabla_mareas_coeficiente_numero');
       let coefficient = coefficientEl?.textContent?.replace(/\s+/g, ' ').trim() ?? null;
-      // Remove the 'altura' part if present e.g., "68 médio" -> "68 médio" (or just "68" if needed)
-      // Current implementation keeps the description ("médio", "baixo", etc.)
-
 
       if (!isNaN(dayOfMonth)) {
           dailyTides.push({
               dayOfMonth,
               dayOfWeek,
-              moonPhaseIconSrc, // Already absolute or null
+              // moonPhaseIconSrc removed
               sunriseTime,
               sunsetTime,
               tide1,
@@ -263,8 +241,7 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
       }
     });
 
-    // --- Second Scrape: Context Text ---
-    // Using specific selector provided by user
+    // --- Scrape Context Text ---
     const contextElementSelector = '#noprint1 > div:nth-child(18) > div:nth-child(3)';
     const contextElement = document.querySelector(contextElementSelector);
     const pageContextText = contextElement?.textContent?.trim() ?? null;
@@ -273,9 +250,9 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
         console.warn(`[Service] Context text element ('${contextElementSelector}') not found or empty on ${url}.`);
     }
 
-    console.log(`[Service] Extracted ${dailyTides.length} daily tide entries. Context: '${pageContextText}' for ${citySlug}, ${stateSlug}.`);
+    console.log(`[Service] Extracted ${dailyTides.length} daily tide entries. Context: '${pageContextText}'. Location: '${locationHeader}'. Month/Year: '${monthYearText}' for ${citySlug}, ${stateSlug}.`);
 
-    return { dailyTides, pageContextText, locationHeader };
+    return { dailyTides, pageContextText, locationHeader, monthYearText };
 
   } catch (error) {
     console.error(`[Service] Error processing or parsing HTML for ${citySlug}, ${stateSlug} from ${url}:`, error);

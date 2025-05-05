@@ -15,6 +15,7 @@ import { Loader2, MapPin, Waves, AlertTriangle, ServerCrash, List, Building, Sun
 import type { ScrapedPageData, DailyTideInfo, TideEvent } from "@/services/tabua-de-mares"; // Import new types
 import { fetchTideDataAction } from "@/app/actions";
 import { useToast } from "@/hooks/use-toast";
+import TideChart from '@/components/tide-chart'; // Import the new chart component
 
 // --- Constants ---
 const LOCALSTORAGE_STATE_SLUG_KEY = "selectedStateSlug";
@@ -279,15 +280,21 @@ export default function TideFinder() {
         )}
 
 
-        {/* Detailed Tide Data Table */}
+        {/* Detailed Tide Data Table & Chart */}
         {showResults && scrapedData && (
           <div className="mt-8 space-y-6">
-             {/* Location Header */}
-             {scrapedData.locationHeader && (
-                 <h2 className="text-2xl font-semibold text-center text-primary flex items-center justify-center gap-2">
-                   <Waves /> {scrapedData.locationHeader}
-                 </h2>
-             )}
+             {/* Location Header & Month/Year */}
+             <div className="text-center">
+                 {scrapedData.locationHeader && (
+                     <h2 className="text-2xl font-semibold text-primary flex items-center justify-center gap-2">
+                       <Waves /> {scrapedData.locationHeader}
+                     </h2>
+                 )}
+                  {scrapedData.monthYearText && (
+                     <p className="text-muted-foreground mt-1">{scrapedData.monthYearText}</p>
+                 )}
+             </div>
+
 
             {/* Context/Activity Text */}
             {scrapedData.pageContextText && (
@@ -303,7 +310,7 @@ export default function TideFinder() {
               <TableHeader>
                 <TableRow className="bg-muted/50">
                   <TableHead className="w-[80px] text-center"><CalendarDays className="inline-block h-4 w-4 mr-1"/> Dia</TableHead>
-                  <TableHead className="w-[80px] text-center"><Moon className="inline-block h-4 w-4 mr-1"/> Fase Lunar</TableHead>
+                  {/* Removed Fase Lunar Header */}
                   <TableHead className="w-[100px] text-center"><Sun className="inline-block h-4 w-4 mr-1"/> Sol</TableHead>
                   <TableHead className="text-center">1ª Maré</TableHead>
                   <TableHead className="text-center">2ª Maré</TableHead>
@@ -316,13 +323,7 @@ export default function TideFinder() {
                 {scrapedData.dailyTides.map((data, index) => (
                   <TableRow key={index} className={index % 2 === 0 ? "" : "bg-secondary/30"}>
                     <TableCell className="font-medium text-center">{data.dayOfMonth}<br/><span className="text-xs text-muted-foreground">{data.dayOfWeek}</span></TableCell>
-                    <TableCell className="text-center">
-                      {data.moonPhaseIconSrc ? (
-                        <Image src={data.moonPhaseIconSrc} alt={`Fase lunar ${data.dayOfMonth}`} width={24} height={24} className="mx-auto" data-ai-hint="moon phase icon"/>
-                      ) : (
-                         <span className="text-muted-foreground text-xs italic">N/A</span>
-                      )}
-                    </TableCell>
+                    {/* Removed Moon Phase Cell */}
                     <TableCell className="text-center text-xs">
                       <span className="flex items-center justify-center gap-1">
                          <Sun className="h-3 w-3 text-orange-400"/> {data.sunriseTime ?? '-'} <span className="text-muted-foreground">↑</span>
@@ -347,6 +348,12 @@ export default function TideFinder() {
               </TableBody>
             </Table>
              <p className="text-xs text-muted-foreground mt-2 text-center">Valores de altura aproximados. Verifique sempre as condições locais.</p>
+
+             {/* Tide Chart */}
+             <div className="mt-8">
+                <h3 className="text-xl font-semibold text-center mb-4">Gráfico de Marés</h3>
+                <TideChart tideData={scrapedData.dailyTides} monthYear={scrapedData.monthYearText} />
+             </div>
           </div>
         )}
 
@@ -366,3 +373,4 @@ export default function TideFinder() {
     </Card>
   );
 }
+
