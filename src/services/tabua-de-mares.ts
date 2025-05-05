@@ -75,6 +75,7 @@ async function fetchHtml(url: string): Promise<string> {
 
 /**
  * Asynchronously retrieves the list of Brazilian states from tabuademares.com.
+ * Scrapes links within the main content section (`section.container`).
  * @returns A promise that resolves to an array of StateInfo objects.
  * @throws If scraping fails.
  */
@@ -85,8 +86,8 @@ export async function getStates(): Promise<StateInfo[]> {
     const dom = new JSDOM(html);
     const document = dom.window.document;
 
-    // Selector based on inspection of tabuademares.com/br on 2024-08-15
-    // It seems states are within links inside <section class="container"> -> <ul> elements
+    // Selector targeting state links within the main content section.
+    // This specific selector is preferred over a generic XPath like /html/body/section for robustness.
     const stateLinks = document.querySelectorAll('section.container ul li a[href^="/br/"]');
 
     const states: StateInfo[] = [];
@@ -101,7 +102,7 @@ export async function getStates(): Promise<StateInfo[]> {
             // Expecting href like /br/state-slug
             if (parts.length === 3 && parts[1] === 'br' && parts[2]) {
                 const slug = parts[2];
-                 // Avoid duplicates like /br/rio-grande-do-sul and /br/rio-grande-do-sul/ (though the latter shouldn't match ^="/br/")
+                 // Avoid duplicates
                 if (!seenSlugs.has(slug)) {
                     states.push({ name, slug });
                     seenSlugs.add(slug);
@@ -130,6 +131,7 @@ export async function getStates(): Promise<StateInfo[]> {
 
 /**
  * Asynchronously retrieves the list of cities for a given state from tabuademares.com.
+ * Scrapes links within the main content section (`section.container`) of the state page.
  * @param stateSlug The URL slug of the state (e.g., "para", "rio-de-janeiro").
  * @returns A promise that resolves to an array of CityInfo objects.
  * @throws If scraping fails.
@@ -145,9 +147,8 @@ export async function getCities(stateSlug: string): Promise<CityInfo[]> {
     const dom = new JSDOM(html);
     const document = dom.window.document;
 
-    // Selector based on inspection of a state page (e.g., tabuademares.com/br/para) on 2024-08-15
-    // Cities seem to be in links within <section class="container"> -> <ul> elements
-    // The href should look like /br/state-slug/city-slug
+    // Selector targeting city links for the specific state within the main content section.
+    // This specific selector is preferred over a generic XPath like /html/body/section for robustness.
     const cityLinks = document.querySelectorAll(`section.container ul li a[href^="/br/${stateSlug}/"]`);
 
     const cities: CityInfo[] = [];
@@ -189,7 +190,7 @@ export async function getCities(stateSlug: string): Promise<CityInfo[]> {
 
 /**
  * Asynchronously retrieves tide data for a given state and city by scraping tabuademares.com.
- *
+ * Scrapes the specific tide table identified by ID `#tabla_mareas_fondo`.
  * @param stateSlug The URL slug of the state (e.g., "para", "rio-de-janeiro").
  * @param citySlug The URL slug of the city (e.g., "belem", "santos").
  * @returns A promise that resolves to an array of TideData objects, or an empty array if data cannot be scraped.
@@ -208,8 +209,9 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
     const dom = new JSDOM(html);
     const document = dom.window.document;
 
-    // Target the table using the specific ID provided by the user
-    const tideTable = document.querySelector('#tabla_mareas_fondo'); // Using querySelector for ID
+    // Target the table using the specific ID.
+    // This CSS selector is equivalent to XPath //*[@id="tabla_mareas_fondo"] but generally preferred.
+    const tideTable = document.querySelector('#tabla_mareas_fondo');
 
     if (!tideTable) {
       console.warn(`[Service] Tide table with ID 'tabla_mareas_fondo' not found on ${url}. Returning empty array.`);
@@ -259,7 +261,8 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
         throw error; // Re-throw fetch errors
     }
     console.error(`[Service] Parsing error prevented tide data extraction for ${citySlug}, ${stateSlug}.`);
-    return []; // Return empty array for parsing errors after successful fetch
+    // Return null to indicate a server-side error during scraping/parsing, distinct from "no data found" (empty array).
+    return null;
   }
 }
 
@@ -268,3 +271,4 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
 // Add jsdom to dependencies: npm install jsdom @types/jsdom
 // NOTE: Need to install jsdom: `npm install jsdom` and `@types/jsdom`: `npm install --save-dev @types/jsdom`
 // Also, jsdom might increase serverless function size/cold start time. Consider alternatives if performance is critical.
+
