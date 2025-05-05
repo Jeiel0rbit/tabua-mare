@@ -204,7 +204,7 @@ export default function TideFinder() {
           Selecione a Localização
         </CardTitle>
         <CardDescription>
-          Escolha o estado, digite a cidade e veja a tábua de marés detalhada. Dados de <a href="https://tabuademares.com/" target="_blank" rel="noopener noreferrer" className="text-primary underline hover:text-primary/80">tabuademares.com</a>.
+          Escolha o estado, digite a cidade e veja a tábua de marés detalhada. Dados de <a href="https://tabuademares.com/" target="_blank" rel="noopener noreferrer" className="text-primary underline hover:text-primary/80">tabuademares.com</a>. Desenvolvido por <a href="https://jeiel.pages.dev/" target="_blank" rel="noopener noreferrer" className="text-primary underline hover:text-primary/80">Jeiel Miranda</a>.
         </CardDescription>
       </CardHeader>
       <CardContent>
