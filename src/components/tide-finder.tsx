@@ -72,10 +72,13 @@ function normalizeToSlug(input: string): string {
 
 // --- Helper Component for Tide Event ---
 const TideEventDisplay = ({ tide, label }: { tide: TideEvent | null, label: string }) => {
-    if (!tide) return <TableCell className="text-muted-foreground text-xs italic">N/A</TableCell>;
+    // Check if tide object exists and has valid time and height
+    if (!tide || tide.time === null || tide.height === null) {
+        return <TableCell className="text-muted-foreground text-xs italic text-center">N/A</TableCell>;
+    }
     return (
         <TableCell className="text-center">
-            <span className="font-medium">{tide.time}</span><br />
+            <span className="font-medium block">{tide.time}</span>
             <span className="text-sm text-muted-foreground">{tide.height}m</span>
         </TableCell>
     );
@@ -312,7 +315,7 @@ export default function TideFinder() {
               <TableBody>
                 {scrapedData.dailyTides.map((data, index) => (
                   <TableRow key={index} className={index % 2 === 0 ? "" : "bg-secondary/30"}>
-                    <TableCell className="font-medium text-center">{data.dayOfMonth}{data.dayOfWeek}</TableCell>
+                    <TableCell className="font-medium text-center">{data.dayOfMonth}<br/><span className="text-xs text-muted-foreground">{data.dayOfWeek}</span></TableCell>
                     <TableCell className="text-center">
                       {data.moonPhaseIconSrc ? (
                         <Image src={data.moonPhaseIconSrc} alt={`Fase lunar ${data.dayOfMonth}`} width={24} height={24} className="mx-auto" data-ai-hint="moon phase icon"/>
@@ -321,14 +324,24 @@ export default function TideFinder() {
                       )}
                     </TableCell>
                     <TableCell className="text-center text-xs">
-                      {data.sunriseTime ?? '-'} <span className="text-muted-foreground">↑</span><br/>
-                      {data.sunsetTime ?? '-'} <span className="text-muted-foreground">↓</span>
+                      <span className="flex items-center justify-center gap-1">
+                         <Sun className="h-3 w-3 text-orange-400"/> {data.sunriseTime ?? '-'} <span className="text-muted-foreground">↑</span>
+                      </span>
+                       <span className="flex items-center justify-center gap-1">
+                         <Moon className="h-3 w-3 text-blue-400"/> {data.sunsetTime ?? '-'} <span className="text-muted-foreground">↓</span>
+                       </span>
                     </TableCell>
                     <TideEventDisplay tide={data.tide1} label="1ª Maré" />
                     <TideEventDisplay tide={data.tide2} label="2ª Maré" />
                     <TideEventDisplay tide={data.tide3} label="3ª Maré" />
                     <TideEventDisplay tide={data.tide4} label="4ª Maré" />
-                    <TableCell className="text-center text-sm">{data.coefficient ?? <span className="text-muted-foreground text-xs italic">N/A</span>}</TableCell>
+                    <TableCell className="text-center text-sm">
+                      {data.coefficient ? (
+                        <span dangerouslySetInnerHTML={{ __html: data.coefficient.replace(/(\d+)/, '<span class="font-bold">$1</span>') }} />
+                      ) : (
+                        <span className="text-muted-foreground text-xs italic">N/A</span>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

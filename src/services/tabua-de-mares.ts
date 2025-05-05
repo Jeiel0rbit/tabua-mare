@@ -98,24 +98,33 @@ async function fetchHtml(url: string): Promise<string> {
 }
 
 /**
- * Parses a combined time and height string (e.g., "0:49\n3,2 m") into a TideEvent object.
- * @param text The text content to parse.
- * @returns A TideEvent object or null if parsing fails.
+ * Helper function to extract tide event data from a table cell.
+ * @param cell The TD element potentially containing tide data.
+ * @returns A TideEvent object or null if data is not found or invalid.
  */
-function parseTideCell(text: string | null | undefined): TideEvent | null {
-    if (!text) return null;
-    const parts = text.trim().split('\n');
-    if (parts.length < 2) return null;
+function extractTideEvent(cell: Element | null | undefined): TideEvent | null {
+    if (!cell) return null;
 
-    const time = parts[0]?.trim();
-    const heightMatch = parts[1]?.trim().match(/([\d.,]+)/);
-    const height = heightMatch ? heightMatch[1].replace(',', '.') : null;
+    const timeEl = cell.querySelector('.tabla_mareas_marea_hora');
+    const heightEl = cell.querySelector('.tabla_mareas_marea_altura_numero');
+
+    const time = timeEl?.textContent?.trim();
+    // Ensure height is a valid number format before replacing comma
+    const heightText = heightEl?.textContent?.trim();
+    const height = heightText && /^[0-9,.]+$/.test(heightText) ? heightText.replace(',', '.') : null;
+
 
     if (time && height) {
+        // Basic time format validation (HH:MM)
+        if (!/^\d{1,2}:\d{2}$/.test(time)) {
+             console.warn(`[Service] Invalid time format extracted: '${time}'`);
+             return null;
+        }
         return { time, height };
     }
     return null;
 }
+
 
 /**
  * Asynchronously retrieves detailed daily tide data for a given state and city by scraping tabuademares.com.
@@ -160,46 +169,80 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
         return { dailyTides: [], pageContextText: null, locationHeader };
     }
 
-    const rows = tableBody.querySelectorAll('tr');
+    // Get all rows, filter out header/metadata rows based on class or structure if needed
+    // The provided HTML has data rows with class like 'tabla_mareas_fila_fondo2' or 'tabla_mareas_fila_fondo1'
+    // And sometimes a second row per day like 'tabla_mareas_fila_fondo2_2' which we skip.
+    const rows = tableBody.querySelectorAll('tr[class^="tabla_mareas_fila tabla_mareas_fila_fondo"]');
     if (rows.length === 0) {
-        console.warn(`[Service] Found table tbody but it has no data rows (tr) on ${url}.`);
+        console.warn(`[Service] Found table tbody but it has no data rows matching selector 'tr[class^="tabla_mareas_fila tabla_mareas_fila_fondo"]' on ${url}.`);
          // Return structure indicating empty table, but include header if possible
         return { dailyTides: [], pageContextText: null, locationHeader };
     }
 
     rows.forEach((row, index) => {
+      // Skip the secondary rows (like tabla_mareas_fila_fondo2_2)
+      if (row.classList.contains('tabla_mareas_fila_fondo1_2') || row.classList.contains('tabla_mareas_fila_fondo2_2') || row.classList.contains('tabla_mareas_fila_fondo3_22_2')) {
+          // console.log(`[Service] Skipping row ${index + 1} as it's a secondary info row.`);
+          return;
+      }
+
       const cells = row.querySelectorAll('td');
-      if (cells.length < 8) { // Need at least 8 cells for all the data points
-          console.warn(`[Service] Skipping row ${index + 1} due to insufficient cells (${cells.length}). Expected 8+. Row HTML:`, row.innerHTML);
+      // Expecting 8 cells in the main data row (day, moon, sun, tide1, tide2, tide3, tide4, coefficient)
+      // Note: The 'Atividade Média' cell is also present but we use the coefficient cell (index 7)
+      if (cells.length < 8) {
+          console.warn(`[Service] Skipping data row ${index + 1} due to insufficient cells (${cells.length}). Expected at least 8. Row HTML:`, row.innerHTML);
           return; // Skip this row
       }
 
-      // Extract data from cells
-      const dayText = cells[0]?.textContent?.trim(); // "1Qui"
-      const dayMatch = dayText?.match(/(\d+)(\D+)/);
-      const dayOfMonth = dayMatch ? parseInt(dayMatch[1], 10) : NaN;
-      const dayOfWeek = dayMatch ? dayMatch[2] : '';
+      // Extract data using specific selectors within cells
+      const dayOfMonthStr = cells[0]?.querySelector('.tabla_mareas_dia_numero')?.textContent?.trim();
+      const dayOfMonth = dayOfMonthStr ? parseInt(dayOfMonthStr, 10) : NaN;
+      const dayOfWeek = cells[0]?.querySelector('.tabla_mareas_dia_dia')?.textContent?.trim() ?? '';
 
-      const moonPhaseIconSrc = cells[1]?.querySelector('img')?.getAttribute('src') ?? null;
+      // Handle Moon phase - prefer image, fallback might be needed if site changes
+      const moonPhaseImg = cells[1]?.querySelector('img');
+      let moonPhaseIconSrc = moonPhaseImg?.getAttribute('src') ?? null;
+      // If src is relative, make it absolute
+      if (moonPhaseIconSrc && !moonPhaseIconSrc.startsWith('http')) {
+          moonPhaseIconSrc = `${BASE_URL}${moonPhaseIconSrc}`;
+      }
+       // Fallback: Check for span class if image not found (less reliable)
+      if (!moonPhaseIconSrc) {
+          const moonSpan = cells[1]?.querySelector('span[class*="icon-hs"]'); // Look for spans with icon classes
+          if (moonSpan) {
+              // Cannot reliably get an image SRC from this, maybe log the class?
+              console.warn(`[Service] Moon phase image not found for day ${dayOfMonthStr}, found span class: ${moonSpan.className}`);
+              // Set to null or a placeholder if needed
+              moonPhaseIconSrc = null; // Or some default placeholder?
+          }
+      }
 
-      // Sunrise/Sunset might be complex, look for times within the cell
-      const sunTimesText = cells[2]?.textContent?.trim(); // "6:08\n18:13"
-      const sunTimes = sunTimesText?.split('\n').map(t => t.trim());
-      const sunriseTime = sunTimes?.[0] ?? null;
-      const sunsetTime = sunTimes?.[1] ?? null;
 
-      // Parse tides - indices might need adjustment based on actual HTML structure
-      const tide1 = parseTideCell(cells[3]?.textContent);
-      const tide2 = parseTideCell(cells[4]?.textContent);
-      const tide3 = parseTideCell(cells[5]?.textContent);
-      const tide4 = parseTideCell(cells[6]?.textContent);
-      const coefficient = cells[7]?.textContent?.trim() ?? null;
+      // Sunrise/Sunset - Extract text, ignore potential icon spans
+      const sunriseTimeRaw = cells[2]?.querySelector('.tabla_mareas_salida_puesta_sol_salida')?.textContent?.trim();
+      const sunsetTimeRaw = cells[2]?.querySelector('.tabla_mareas_salida_puesta_sol_puesta')?.textContent?.trim();
+      const sunriseTime = sunriseTimeRaw ? sunriseTimeRaw.match(/\d{1,2}:\d{2}/)?.[0] ?? null : null;
+      const sunsetTime = sunsetTimeRaw ? sunsetTimeRaw.match(/\d{1,2}:\d{2}/)?.[0] ?? null : null;
+
+
+      // Parse tides using helper function and specific cell indices
+      const tide1 = extractTideEvent(cells[3]);
+      const tide2 = extractTideEvent(cells[4]);
+      const tide3 = extractTideEvent(cells[5]);
+      const tide4 = extractTideEvent(cells[6]);
+
+      // Coefficient - grab all text content, clean it up
+      const coefficientEl = cells[7]?.querySelector('.tabla_mareas_coeficiente_numero');
+      let coefficient = coefficientEl?.textContent?.replace(/\s+/g, ' ').trim() ?? null;
+      // Remove the 'altura' part if present e.g., "68 médio" -> "68 médio" (or just "68" if needed)
+      // Current implementation keeps the description ("médio", "baixo", etc.)
+
 
       if (!isNaN(dayOfMonth)) {
           dailyTides.push({
               dayOfMonth,
               dayOfWeek,
-              moonPhaseIconSrc: moonPhaseIconSrc ? `${BASE_URL}${moonPhaseIconSrc}` : null, // Prepend base URL if relative
+              moonPhaseIconSrc, // Already absolute or null
               sunriseTime,
               sunsetTime,
               tide1,
@@ -209,13 +252,13 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
               coefficient,
           });
       } else {
-          console.warn(`[Service] Skipping row ${index + 1} due to failed day parsing. DayText='${dayText}'. Row HTML:`, row.innerHTML);
+          console.warn(`[Service] Skipping data row ${index + 1} due to failed day parsing. DayOfMonthStr='${dayOfMonthStr}'. Row HTML:`, row.innerHTML);
       }
     });
 
-    // --- Second Scrape: Context Text (after simulated delay) ---
-    // No actual delay needed server-side as we have the full DOM
-    const contextElementSelector = '#noprint1 > div:nth-child(18) > div:nth-child(3)'; // Using specific selector
+    // --- Second Scrape: Context Text ---
+    // Using specific selector provided by user
+    const contextElementSelector = '#noprint1 > div:nth-child(18) > div:nth-child(3)';
     const contextElement = document.querySelector(contextElementSelector);
     const pageContextText = contextElement?.textContent?.trim() ?? null;
 
@@ -223,7 +266,7 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
         console.warn(`[Service] Context text element ('${contextElementSelector}') not found or empty on ${url}.`);
     }
 
-    console.log(`[Service] Extracted ${dailyTides.length} daily tide entries and context: '${pageContextText}' for ${citySlug}, ${stateSlug}.`);
+    console.log(`[Service] Extracted ${dailyTides.length} daily tide entries. Context: '${pageContextText}' for ${citySlug}, ${stateSlug}.`);
 
     return { dailyTides, pageContextText, locationHeader };
 
