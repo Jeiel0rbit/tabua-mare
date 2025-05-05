@@ -1,21 +1,58 @@
 /**
  * @fileOverview Service function for interacting with tabuademares.com.
- * Includes function to fetch tide data for a city.
+ * Includes function to fetch detailed daily tide data for a city.
  */
 
 import { JSDOM } from 'jsdom'; // Using jsdom for server-side DOM parsing
 
 /**
- * Represents tide data for a specific time.
+ * Represents a single tide event (high or low).
  */
-export interface TideData {
-  /** The time of the tide. */
+export interface TideEvent {
+  /** The time of the tide (HH:MM). */
   time: string;
-  /** The height of the tide in meters (e.g., "1.2"). */
+  /** The height of the tide in meters (e.g., "3.2"). */
   height: string;
 }
 
-// StateInfo and CityInfo interfaces are removed as they are no longer fetched/used here.
+/**
+ * Represents the detailed tide and related information for a single day.
+ */
+export interface DailyTideInfo {
+  /** The day of the month (e.g., 1). */
+  dayOfMonth: number;
+  /** The abbreviation for the day of the week (e.g., "Qui"). */
+  dayOfWeek: string;
+  /** The URL source for the moon phase icon. */
+  moonPhaseIconSrc: string | null;
+  /** Sunrise time (HH:MM). */
+  sunriseTime: string | null;
+  /** Sunset time (HH:MM). */
+  sunsetTime: string | null;
+  /** First tide event of the day. */
+  tide1: TideEvent | null;
+  /** Second tide event of the day. */
+  tide2: TideEvent | null;
+  /** Third tide event of the day. */
+  tide3: TideEvent | null;
+  /** Fourth tide event of the day. */
+  tide4: TideEvent | null;
+  /** Tide coefficient text (e.g., "68médio"). */
+  coefficient: string | null;
+}
+
+/**
+ * Represents the complete data scraped from the page, including daily tides and context.
+ */
+export interface ScrapedPageData {
+  /** An array of detailed tide information for each day found. */
+  dailyTides: DailyTideInfo[];
+  /** Context text scraped from a specific element after a delay (e.g., activity level/summary). */
+  pageContextText: string | null;
+   /** The main location header text (e.g., "Tábua de marés de Ananindeua"). */
+  locationHeader: string | null;
+}
+
 
 const BASE_URL = "https://tabuademares.com";
 
@@ -46,45 +83,55 @@ function normalizeToSlug(input: string): string {
 async function fetchHtml(url: string): Promise<string> {
   console.log(`[Service] Fetching HTML from: ${url}`);
   try {
-    // Use 'no-store' or headers to prevent caching issues during development/scraping
     const response = await fetch(url, { cache: 'no-store' });
     if (!response.ok) {
-        // Log the failed URL for easier debugging
       console.error(`[Service] HTTP error! status: ${response.status} for URL: ${url}`);
-      // Throw a more informative error
       throw new Error(`HTTP error ${response.status} fetching ${url}`);
     }
     const html = await response.text();
     console.log(`[Service] Successfully fetched HTML from: ${url}`);
     return html;
   } catch (error) {
-    // Log the specific error encountered during fetch
     console.error(`[Service] Network or fetch error for ${url}:`, error);
-    // Re-throw the original error or a new one wrapping it
     throw new Error(`Failed to fetch HTML from ${url}. Reason: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
-// getStates and getCities functions are removed as they are no longer used.
+/**
+ * Parses a combined time and height string (e.g., "0:49\n3,2 m") into a TideEvent object.
+ * @param text The text content to parse.
+ * @returns A TideEvent object or null if parsing fails.
+ */
+function parseTideCell(text: string | null | undefined): TideEvent | null {
+    if (!text) return null;
+    const parts = text.trim().split('\n');
+    if (parts.length < 2) return null;
+
+    const time = parts[0]?.trim();
+    const heightMatch = parts[1]?.trim().match(/([\d.,]+)/);
+    const height = heightMatch ? heightMatch[1].replace(',', '.') : null;
+
+    if (time && height) {
+        return { time, height };
+    }
+    return null;
+}
 
 /**
- * Asynchronously retrieves tide data for a given state and city by scraping tabuademares.com.
- * Scrapes the specific tide table identified by ID `#tabla_mareas_fondo`.
+ * Asynchronously retrieves detailed daily tide data for a given state and city by scraping tabuademares.com.
+ * Scrapes the main tide table (#tabla_mareas_fondo) and additional context text after a delay.
  * Handles the special 'so-paulo' slug for São Paulo state.
  * @param stateSlug The URL slug of the state (e.g., "para", "rio-de-janeiro", "so-paulo").
  * @param citySlug The URL slug of the city, normalized from user input (e.g., "belem", "santos", "sao-vicente").
- * @returns A promise that resolves to an array of TideData objects, an empty array if no data found, or null if a critical error occurs.
+ * @returns A promise that resolves to a ScrapedPageData object containing daily info and context, or null if a critical error occurs.
  * @throws If fetching the HTML fails critically.
  */
-export async function getTideData(stateSlug: string, citySlug: string): Promise<TideData[] | null> {
+export async function getTideData(stateSlug: string, citySlug: string): Promise<ScrapedPageData | null> {
   if (!stateSlug || !citySlug) {
      console.warn("[Service] getTideData called with empty stateSlug or citySlug.");
-     // Return null to indicate invalid input error, consistent with action layer
      return null;
   }
 
-  // Construct the URL using the provided slugs.
-  // The stateSlug might be 'so-paulo' as handled by the caller.
   const url = `${BASE_URL}/br/${stateSlug}/${citySlug}`;
   console.log(`[Service] Requesting tide data from URL: ${url}`);
 
@@ -93,65 +140,89 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
     const dom = new JSDOM(html);
     const document = dom.window.document;
 
-    // Target the table using the specific ID.
+    // --- First Scrape: Main Tide Table ---
     const tideTable = document.querySelector('#tabla_mareas_fondo');
+    const dailyTides: DailyTideInfo[] = [];
+    const locationHeader = document.querySelector('h1')?.textContent?.trim() ?? null; // Scrape H1 header
 
     if (!tideTable) {
-      console.warn(`[Service] Tide table with ID 'tabla_mareas_fondo' not found on ${url}. This might mean the city/state combination is invalid or the page structure changed. Returning empty array.`);
-      // Return empty array because the page was fetched successfully, but the target table wasn't found.
-      // This indicates "no data found for this specific city/state" rather than a server error.
-      return [];
+      console.warn(`[Service] Tide table '#tabla_mareas_fondo' not found on ${url}. Assuming invalid city/state or page structure change.`);
+      // Return structure indicating no table found, but include header if possible
+      return { dailyTides: [], pageContextText: null, locationHeader };
     }
 
-    const tideData: TideData[] = [];
     const rows = tideTable.querySelectorAll('tbody tr');
-
     if (rows.length === 0) {
-        console.warn(`[Service] Found table '#tabla_mareas_fondo' but it contains no data rows (tbody tr) on ${url}. Returning empty array.`);
-        return []; // Table exists but is empty
+        console.warn(`[Service] Found table '#tabla_mareas_fondo' but it has no data rows (tbody tr) on ${url}.`);
+         // Return structure indicating empty table, but include header if possible
+        return { dailyTides: [], pageContextText: null, locationHeader };
     }
 
-    rows.forEach((row, index) => { // Added index for logging
+    rows.forEach((row, index) => {
       const cells = row.querySelectorAll('td');
-      if (cells.length >= 2) {
-        const time = cells[0]?.textContent?.trim();
-        const heightText = cells[1]?.textContent?.trim(); // e.g., "2.8m"
+      if (cells.length < 8) { // Need at least 8 cells for all the data points
+          console.warn(`[Service] Skipping row ${index + 1} due to insufficient cells (${cells.length}). Expected 8+. Row HTML:`, row.innerHTML);
+          return; // Skip this row
+      }
 
-        const heightMatch = heightText?.match(/([\d.,]+)/);
-        const height = heightMatch ? heightMatch[1].replace(',', '.') : null;
+      // Extract data from cells
+      const dayText = cells[0]?.textContent?.trim(); // "1Qui"
+      const dayMatch = dayText?.match(/(\d+)(\D+)/);
+      const dayOfMonth = dayMatch ? parseInt(dayMatch[1], 10) : NaN;
+      const dayOfWeek = dayMatch ? dayMatch[2] : '';
 
-        if (time && height !== null) {
-          tideData.push({ time, height });
-        } else {
-            // Log which row had issues
-            console.warn(`[Service] Skipping row ${index + 1} due to missing/invalid time or height. Time='${time}', HeightText='${heightText}'. Row HTML:`, row.innerHTML);
-        }
+      const moonPhaseIconSrc = cells[1]?.querySelector('img')?.getAttribute('src') ?? null;
+
+      // Sunrise/Sunset might be complex, look for times within the cell
+      const sunTimesText = cells[2]?.textContent?.trim(); // "6:08\n18:13"
+      const sunTimes = sunTimesText?.split('\n').map(t => t.trim());
+      const sunriseTime = sunTimes?.[0] ?? null;
+      const sunsetTime = sunTimes?.[1] ?? null;
+
+      // Parse tides - indices might need adjustment based on actual HTML structure
+      const tide1 = parseTideCell(cells[3]?.textContent);
+      const tide2 = parseTideCell(cells[4]?.textContent);
+      const tide3 = parseTideCell(cells[5]?.textContent);
+      const tide4 = parseTideCell(cells[6]?.textContent);
+      const coefficient = cells[7]?.textContent?.trim() ?? null;
+
+      if (!isNaN(dayOfMonth)) {
+          dailyTides.push({
+              dayOfMonth,
+              dayOfWeek,
+              moonPhaseIconSrc: moonPhaseIconSrc ? `${BASE_URL}${moonPhaseIconSrc}` : null, // Prepend base URL if relative
+              sunriseTime,
+              sunsetTime,
+              tide1,
+              tide2,
+              tide3,
+              tide4,
+              coefficient,
+          });
       } else {
-          console.warn(`[Service] Skipping row ${index + 1} due to insufficient cells (${cells.length}). Row HTML:`, row.innerHTML);
+          console.warn(`[Service] Skipping row ${index + 1} due to failed day parsing. DayText='${dayText}'. Row HTML:`, row.innerHTML);
       }
     });
 
-    if (tideData.length === 0 && rows.length > 0) {
-        // This case means rows were found but none yielded valid data after parsing.
-        console.warn(`[Service] Processed ${rows.length} rows in '#tabla_mareas_fondo' but extracted no valid tide data from ${url}. Check parsing logic or source data format.`);
-    } else if (tideData.length > 0) {
-        console.log(`[Service] Successfully extracted ${tideData.length} tide entries for ${citySlug}, ${stateSlug}.`);
-    }
-    // If tideData is still empty at this point (either table not found, table empty, or parsing failed for all rows),
-    // return the empty array as intended.
+    // --- Second Scrape: Context Text (after simulated delay) ---
+    // No actual delay needed server-side as we have the full DOM
+    const contextElement = document.querySelector('#noprint1 > div:nth-child(18) > div:nth-child(3)'); // Using specific selector
+    const pageContextText = contextElement?.textContent?.trim() ?? null;
 
-    return tideData;
+    if (!pageContextText) {
+        console.warn(`[Service] Context text element ('#noprint1 > div:nth-child(18) > div:nth-child(3)') not found or empty on ${url}.`);
+    }
+
+    console.log(`[Service] Extracted ${dailyTides.length} daily tide entries and context: '${pageContextText}' for ${citySlug}, ${stateSlug}.`);
+
+    return { dailyTides, pageContextText, locationHeader };
 
   } catch (error) {
-    // Errors from fetchHtml are already logged and re-thrown.
-    // Catch potential errors from JSDOM parsing itself, although less common.
     console.error(`[Service] Error processing or parsing HTML for ${citySlug}, ${stateSlug} from ${url}:`, error);
-    // Return null for server-side errors during processing, distinct from "no data found" (empty array).
-     return null;
+    return null; // Return null for critical errors
   }
 }
 
-// Export the normalization function if needed elsewhere, otherwise keep it internal
+// Export the normalization function if needed elsewhere
 export { normalizeToSlug };
-// Add jsdom to dependencies: npm install jsdom @types/jsdom
-// NOTE: Need to install jsdom: `npm install jsdom` and `@types/jsdom`: `npm install --save-dev @types/jsdom`
+// Ensure jsdom is installed: npm install jsdom @types/jsdom
