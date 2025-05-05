@@ -3,54 +3,16 @@
  */
 'use server';
 
-import type { TideData, StateInfo, CityInfo } from '@/services/tabua-de-mares';
-import { getTideData, getStates, getCities } from '@/services/tabua-de-mares';
+import type { TideData } from '@/services/tabua-de-mares'; // Keep TideData if needed by fetchTideDataAction
+import { getTideData } from '@/services/tabua-de-mares';
 
-/**
- * Server action to fetch the list of Brazilian states.
- * @returns A promise that resolves to an array of StateInfo or null if an error occurs.
- */
-export async function fetchStatesAction(): Promise<StateInfo[] | null> {
-    try {
-        console.log("[Action] Fetching states...");
-        const states = await getStates();
-        console.log(`[Action] Successfully fetched ${states.length} states.`);
-        // If getStates throws, the catch block handles it. If it returns [], it's valid.
-        return states;
-    } catch (error) {
-        console.error("[Action] Error fetching states:", error);
-        return null; // Return null on error
-    }
-}
-
-/**
- * Server action to fetch the list of cities for a given state slug.
- * @param stateSlug The URL slug of the state.
- * @returns A promise that resolves to an array of CityInfo or null if an error occurs.
- */
-export async function fetchCitiesAction(stateSlug: string): Promise<CityInfo[] | null> {
-    try {
-        // Basic input validation
-        if (!stateSlug) {
-            console.warn("[Action] fetchCitiesAction called with empty stateSlug.");
-            return null; // Return null for invalid input
-        }
-        console.log(`[Action] Fetching cities for state slug: ${stateSlug}`);
-        const cities = await getCities(stateSlug);
-         console.log(`[Action] Successfully fetched ${cities.length} cities for state ${stateSlug}.`);
-        // If getCities throws, the catch block handles it. If it returns [], it's valid.
-        return cities;
-    } catch (error) {
-        console.error(`[Action] Error fetching cities for state ${stateSlug}:`, error);
-        return null; // Return null on error
-    }
-}
-
+// Removed fetchStatesAction and fetchCitiesAction as they are no longer used.
+// State list is now static and city is a text input.
 
 /**
  * Server action to fetch tide data by scraping.
- * @param stateSlug The URL slug of the state.
- * @param citySlug The URL slug of the city.
+ * @param stateSlug The URL slug of the state. Special case: "so-paulo" for São Paulo.
+ * @param citySlug The URL slug of the city, normalized from user input.
  * @returns A promise that resolves to an array of TideData, an empty array if no data found, or null if a critical error occurs during fetch/scraping.
  */
 export async function fetchTideDataAction(stateSlug: string, citySlug: string): Promise<TideData[] | null> {
@@ -63,6 +25,7 @@ export async function fetchTideDataAction(stateSlug: string, citySlug: string): 
 
     console.log(`[Action] Fetching tide data for: ${citySlug}, ${stateSlug}`); // Log the request
 
+    // Use the potentially modified stateSlug ("so-paulo" for SP)
     const data = await getTideData(stateSlug, citySlug);
     // getTideData now returns null for critical fetch/parsing errors,
     // empty array [] for successful scrape with no data found,
