@@ -119,7 +119,7 @@ function parseTideCell(text: string | null | undefined): TideEvent | null {
 
 /**
  * Asynchronously retrieves detailed daily tide data for a given state and city by scraping tabuademares.com.
- * Scrapes the main tide table (#tabla_mareas_fondo) and additional context text after a delay.
+ * Scrapes the main tide table and additional context text.
  * Handles the special 'so-paulo' slug for São Paulo state.
  * @param stateSlug The URL slug of the state (e.g., "para", "rio-de-janeiro", "so-paulo").
  * @param citySlug The URL slug of the city, normalized from user input (e.g., "belem", "santos", "sao-vicente").
@@ -141,19 +141,28 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
     const document = dom.window.document;
 
     // --- First Scrape: Main Tide Table ---
-    const tideTable = document.querySelector('#tabla_mareas_fondo');
+    // Updated selector based on user request (derived from XPath)
+    const tideTableSelector = 'body > section > div:nth-child(4) > div > div:nth-child(1) > div:nth-child(4) > div:nth-child(1) > table';
+    const tideTable = document.querySelector(tideTableSelector);
     const dailyTides: DailyTideInfo[] = [];
     const locationHeader = document.querySelector('h1')?.textContent?.trim() ?? null; // Scrape H1 header
 
     if (!tideTable) {
-      console.warn(`[Service] Tide table '#tabla_mareas_fondo' not found on ${url}. Assuming invalid city/state or page structure change.`);
+      console.warn(`[Service] Tide table ('${tideTableSelector}') not found on ${url}. Assuming invalid city/state or page structure change.`);
       // Return structure indicating no table found, but include header if possible
       return { dailyTides: [], pageContextText: null, locationHeader };
     }
 
-    const rows = tideTable.querySelectorAll('tbody tr');
+    // Find the tbody within the selected table
+    const tableBody = tideTable.querySelector('tbody');
+    if (!tableBody) {
+        console.warn(`[Service] Found table ('${tideTableSelector}') but it has no tbody element on ${url}.`);
+        return { dailyTides: [], pageContextText: null, locationHeader };
+    }
+
+    const rows = tableBody.querySelectorAll('tr');
     if (rows.length === 0) {
-        console.warn(`[Service] Found table '#tabla_mareas_fondo' but it has no data rows (tbody tr) on ${url}.`);
+        console.warn(`[Service] Found table tbody but it has no data rows (tr) on ${url}.`);
          // Return structure indicating empty table, but include header if possible
         return { dailyTides: [], pageContextText: null, locationHeader };
     }
@@ -206,11 +215,12 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
 
     // --- Second Scrape: Context Text (after simulated delay) ---
     // No actual delay needed server-side as we have the full DOM
-    const contextElement = document.querySelector('#noprint1 > div:nth-child(18) > div:nth-child(3)'); // Using specific selector
+    const contextElementSelector = '#noprint1 > div:nth-child(18) > div:nth-child(3)'; // Using specific selector
+    const contextElement = document.querySelector(contextElementSelector);
     const pageContextText = contextElement?.textContent?.trim() ?? null;
 
     if (!pageContextText) {
-        console.warn(`[Service] Context text element ('#noprint1 > div:nth-child(18) > div:nth-child(3)') not found or empty on ${url}.`);
+        console.warn(`[Service] Context text element ('${contextElementSelector}') not found or empty on ${url}.`);
     }
 
     console.log(`[Service] Extracted ${dailyTides.length} daily tide entries and context: '${pageContextText}' for ${citySlug}, ${stateSlug}.`);
