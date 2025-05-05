@@ -23,7 +23,6 @@ export interface DailyTideInfo {
   dayOfMonth: number;
   /** The abbreviation for the day of the week (e.g., "Qui"). */
   dayOfWeek: string;
-  // moonPhaseIconSrc removed as it's no longer needed/reliable
   /** Sunrise time (HH:MM). */
   sunriseTime: string | null;
   /** Sunset time (HH:MM). */
@@ -52,6 +51,7 @@ export interface ScrapedPageData {
   locationHeader: string | null;
   /** The text indicating the month and year of the tide table (e.g., "maio de 2025"). */
   monthYearText: string | null;
+  // tideChartSvg removed
 }
 
 
@@ -160,9 +160,8 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
     const tableBody = document.querySelector(tideTableBodySelector);
     const dailyTides: DailyTideInfo[] = [];
 
-    const defaultReturn: ScrapedPageData = {
+    const defaultReturn: Omit<ScrapedPageData, 'pageContextText'> = { // Omit pageContextText initially
         dailyTides: [],
-        pageContextText: null, // Will be scraped later
         locationHeader,
         monthYearText,
       };
@@ -172,11 +171,11 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
         // Need to scrape context even if table fails
         const contextElementSelector = '#noprint1 > div:nth-child(18) > div:nth-child(3)';
         const contextElement = document.querySelector(contextElementSelector);
-        defaultReturn.pageContextText = contextElement?.textContent?.trim() ?? null;
-        if (!defaultReturn.pageContextText) {
+        const pageContextText = contextElement?.textContent?.trim() ?? null;
+        if (!pageContextText) {
             console.warn(`[Service] Context text element ('${contextElementSelector}') also not found on ${url}.`);
         }
-        return defaultReturn;
+        return {...defaultReturn, pageContextText}; // Add context text back
     }
 
     const rows = tableBody.querySelectorAll('tr[class^="tabla_mareas_fila tabla_mareas_fila_fondo"]');
@@ -185,21 +184,22 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
         // Need to scrape context even if table fails
         const contextElementSelector = '#noprint1 > div:nth-child(18) > div:nth-child(3)';
         const contextElement = document.querySelector(contextElementSelector);
-        defaultReturn.pageContextText = contextElement?.textContent?.trim() ?? null;
-        if (!defaultReturn.pageContextText) {
+        const pageContextText = contextElement?.textContent?.trim() ?? null;
+        if (!pageContextText) {
             console.warn(`[Service] Context text element ('${contextElementSelector}') also not found on ${url}.`);
         }
-        return defaultReturn;
+        return {...defaultReturn, pageContextText}; // Add context text back
     }
 
     rows.forEach((row, index) => {
-      if (row.classList.contains('tabla_mareas_fila_fondo1_2') || row.classList.contains('tabla_mareas_fila_fondo2_2') || row.classList.contains('tabla_mareas_fila_fondo3_22_2')) {
+      // Skip rows that are sub-rows for layout (often contain _2 or _22_2)
+      if (/_2(?:_2)?$/.test(row.className)) {
           return;
       }
 
       const cells = row.querySelectorAll('td');
       if (cells.length < 8) {
-          console.warn(`[Service] Skipping data row ${index + 1} due to insufficient cells (${cells.length}). Expected at least 8. Row HTML:`, row.innerHTML);
+          // console.warn(`[Service] Skipping data row ${index + 1} due to insufficient cells (${cells.length}). Expected at least 8. Row HTML:`, row.innerHTML); // Reduce noise
           return;
       }
 
@@ -223,11 +223,11 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
       const coefficientEl = cells[7]?.querySelector('.tabla_mareas_coeficiente_numero');
       let coefficient = coefficientEl?.textContent?.replace(/\s+/g, ' ').trim() ?? null;
 
+
       if (!isNaN(dayOfMonth)) {
           dailyTides.push({
               dayOfMonth,
               dayOfWeek,
-              // moonPhaseIconSrc removed
               sunriseTime,
               sunsetTime,
               tide1,
@@ -237,7 +237,7 @@ export async function getTideData(stateSlug: string, citySlug: string): Promise<
               coefficient,
           });
       } else {
-          console.warn(`[Service] Skipping data row ${index + 1} due to failed day parsing. DayOfMonthStr='${dayOfMonthStr}'. Row HTML:`, row.innerHTML);
+          // console.warn(`[Service] Skipping data row ${index + 1} due to failed day parsing. DayOfMonthStr='${dayOfMonthStr}'. Row HTML:`, row.innerHTML); // Reduce noise
       }
     });
 

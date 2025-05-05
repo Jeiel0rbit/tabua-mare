@@ -11,8 +11,8 @@ import {
   ChartConfig,
 } from "@/components/ui/chart";
 import {
-  AreaChart, // Changed from LineChart
-  Area,      // Changed from Line
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -26,15 +26,18 @@ import { useMemo } from 'react';
 interface TideChartProps {
   tideData: DailyTideInfo[];
   monthYear: string | null; // e.g., "maio de 2025"
-  tideChartSvg: string | null; // New prop for SVG content
+  tideChartSvg: string | null; // Prop for static SVG chart content
 }
 
+// Updated ChartDataPoint to use timestamp and store original Date
 interface ChartDataPoint {
-  dateTime: Date;
+  timestamp: number; // Use timestamp for Recharts X-axis
   height: number;
-  type: 'high' | 'low'; // Add type to distinguish high/low
+  type: 'high' | 'low';
   dayOfMonth: number;
+  originalDateTime: Date; // Keep original Date for formatting
 }
+
 
 const chartConfig = {
   height: {
@@ -51,7 +54,7 @@ function parseTideTime(day: number, timeStr: string, monthYearStr: string | null
   const monthYearMatch = monthYearStr.match(/(\w+) de (\d{4})/);
 
   if (!timeMatch || !monthYearMatch) {
-    console.warn(`[TideChart] Could not parse time '${timeStr}' or month/year '${monthYearStr}'`);
+    // console.warn(`[TideChart] Could not parse time '${timeStr}' or month/year '${monthYearStr}'`); // Reduced noise
     return null;
   }
 
@@ -72,13 +75,20 @@ function parseTideTime(day: number, timeStr: string, monthYearStr: string | null
   // Create date in local timezone. Recharts typically handles Date objects correctly.
   const date = new Date(parseInt(year, 10), monthIndex, day, parseInt(hours, 10), parseInt(minutes, 10));
 
-  // Check if the date is valid (e.g., handles Feb 29 in non-leap years, etc.)
+  // Check if the date is valid
   if (isNaN(date.getTime())) {
       console.warn(`[TideChart] Invalid date created for day ${day}, time ${timeStr}, month/year ${monthYearStr}`);
       return null;
   }
   return date;
 }
+
+// Format X-axis ticks from timestamp to show Day/Time
+const formatXAxis = (timestamp: number): string => {
+    const date = new Date(timestamp);
+    // Show 'Day X HH:MM' format
+    return `${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+};
 
 export default function TideChart({ tideData, monthYear, tideChartSvg }: TideChartProps) {
   const chartData = useMemo(() => {
@@ -91,21 +101,31 @@ export default function TideChart({ tideData, monthYear, tideChartSvg }: TideCha
         if (tide && tide.time && tide.height) {
           const dateTime = parseTideTime(dayInfo.dayOfMonth, tide.time, monthYear);
           const height = parseFloat(tide.height);
-          if (dateTime && !isNaN(height)) {
-            // Determine type based on comparison with previous valid height
-            let type: 'high' | 'low' = 'low'; // Default to low if no previous point
+
+          // Ensure dateTime is valid and has a valid timestamp before pushing
+          if (dateTime && !isNaN(dateTime.getTime()) && !isNaN(height)) {
+            let type: 'high' | 'low' = 'low';
             if (previousHeight !== null) {
               type = height > previousHeight ? 'high' : 'low';
             }
-            dataPoints.push({ dateTime, height, type, dayOfMonth: dayInfo.dayOfMonth });
-            previousHeight = height; // Update previous height for next comparison
+            dataPoints.push({
+              timestamp: dateTime.getTime(), // Use timestamp for chart data
+              height,
+              type,
+              dayOfMonth: dayInfo.dayOfMonth,
+              originalDateTime: dateTime // Store original date
+            });
+            previousHeight = height;
+          } else {
+              // Log if a point is skipped due to invalid date/time or height
+              console.warn(`[TideChart] Skipping data point: Day=${dayInfo.dayOfMonth}, Time=${tide?.time}, Height=${tide?.height}. Reason: Invalid dateTime, timestamp, or height.`);
           }
         }
       });
     });
 
-    // Sort by date just in case they weren't perfectly ordered
-    return dataPoints.sort((a, b) => a.dateTime.getTime() - b.dateTime.getTime());
+    // Sort by timestamp
+    return dataPoints.sort((a, b) => a.timestamp - b.timestamp);
   }, [tideData, monthYear]);
 
   // --- Render SVG Chart if available ---
@@ -131,16 +151,8 @@ export default function TideChart({ tideData, monthYear, tideChartSvg }: TideCha
   const heights = chartData.map(d => d.height);
   const minY = Math.min(...heights);
   const maxY = Math.max(...heights);
-  const yDomainPadding = 0.2; // Add some padding
-  // Ensure minY isn't higher than 0 if all tides are positive
+  const yDomainPadding = 0.2;
   const yDomain = [Math.min(0, Math.floor(minY - yDomainPadding)), Math.ceil(maxY + yDomainPadding)];
-
-
-  // Format X-axis ticks to show Day/Time
-  const formatXAxis = (tickItem: Date) => {
-    // Show 'Day X HH:MM' format
-    return `${tickItem.getDate()} ${tickItem.getHours().toString().padStart(2, '0')}:${tickItem.getMinutes().toString().padStart(2, '0')}`;
-  };
 
 
   return (
@@ -148,9 +160,9 @@ export default function TideChart({ tideData, monthYear, tideChartSvg }: TideCha
          <h3 className="text-xl font-semibold text-center mb-4 text-primary">Gráfico de Marés (Interativo)</h3>
         <ChartContainer config={chartConfig} className="aspect-video h-[400px] w-full">
         <ResponsiveContainer width="100%" height="100%">
-            <AreaChart // Changed from LineChart
+            <AreaChart
             data={chartData}
-            margin={{ top: 5, right: 20, left: -20, bottom: 40 }} // Adjusted margins
+            margin={{ top: 5, right: 20, left: -20, bottom: 40 }}
             >
              <defs>
                 <linearGradient id="tideGradient" x1="0" y1="0" x2="0" y2="1">
@@ -160,40 +172,45 @@ export default function TideChart({ tideData, monthYear, tideChartSvg }: TideCha
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
             <XAxis
-                dataKey="dateTime"
+                dataKey="timestamp" // Use timestamp for dataKey
                 tickFormatter={formatXAxis} // Use the custom formatter
-                type="number" // Treat dateTime as numbers (timestamps)
+                type="number"
                 scale="time"
                 domain={['dataMin', 'dataMax']}
-                angle={-45} // Angle ticks for better readability
-                textAnchor="end" // Align angled ticks
-                height={60} // Increase height for angled labels
-                tick={{ fontSize: 10 }} // Smaller font size for ticks
-                interval="preserveStartEnd" // Ensure first and last ticks are shown
-                minTickGap={50} // Minimum gap between ticks
+                angle={-45}
+                textAnchor="end"
+                height={60}
+                tick={{ fontSize: 10 }}
+                interval="preserveStartEnd"
+                minTickGap={50}
                 />
             <YAxis
                 dataKey="height"
                 domain={yDomain}
                 tickFormatter={(value) => `${value}m`}
-                tick={{ fontSize: 10 }} // Smaller font size for ticks
-                width={40} // Adjust width for Y-axis labels
-                axisLine={false} // Hide Y-axis line for cleaner look
-                tickLine={false} // Hide Y-axis tick lines
+                tick={{ fontSize: 10 }}
+                width={40}
+                axisLine={false}
+                tickLine={false}
             />
             <Tooltip
-                cursor={{ stroke: 'hsl(var(--accent))', strokeWidth: 1, fill: 'hsl(var(--accent) / 0.1)' }} // Added fill for cursor
+                cursor={{ stroke: 'hsl(var(--accent))', strokeWidth: 1, fill: 'hsl(var(--accent) / 0.1)' }}
                 content={
                 <ChartTooltipContent
-                    indicator="dot" // Changed from line to dot to avoid confusion with area line
+                    indicator="dot"
                     labelFormatter={(label, payload) => {
-                    if (payload && payload.length > 0 && payload[0].payload.dateTime) {
-                        const date = new Date(payload[0].payload.dateTime);
+                    // Use originalDateTime from payload for formatting
+                    if (payload && payload.length > 0 && payload[0].payload.originalDateTime) {
+                        const date = payload[0].payload.originalDateTime;
                         const formattedDate = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}`;
                         const formattedTime = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
                         return `${formattedDate} ${formattedTime}`;
                     }
-                    return label;
+                    // Fallback using timestamp if originalDateTime is missing
+                    if (typeof label === 'number') {
+                         return formatXAxis(label);
+                    }
+                    return String(label); // Fallback to default label
                     }}
                     formatter={(value, name, props) => (
                     <div className="flex flex-col">
@@ -206,32 +223,32 @@ export default function TideChart({ tideData, monthYear, tideChartSvg }: TideCha
                 />
                 }
             />
-            <Area // Changed from Line
+            <Area
                 type="monotone"
                 dataKey="height"
-                stroke="hsl(var(--chart-1))" // Primary color for the line on top of the area
+                stroke="hsl(var(--chart-1))"
                 strokeWidth={2}
                 fillOpacity={1}
-                fill="url(#tideGradient)" // Apply gradient fill
+                fill="url(#tideGradient)"
                 dot={(props) => {
-                    const { cx, cy, stroke, payload, index } = props as any; // Cast to any to access payload easily
+                    const { cx, cy, stroke, payload, index } = props as any;
                     const isHighTide = payload.type === 'high';
-                    const key = `${index}-${payload.dateTime?.getTime()}`;
+                    // Use timestamp in the key for uniqueness
+                    const key = `${index}-${payload.timestamp}`;
                     return (
                         <Dot
                         key={key}
                         cx={cx}
                         cy={cy}
-                        r={4} // Dot radius
-                        fill={isHighTide ? "hsl(var(--accent))" : "hsl(var(--chart-1))"} // Coral for high tide, blue for low
-                        stroke={"hsl(var(--background))"} // Use background color for stroke to make dots pop
+                        r={4}
+                        fill={isHighTide ? "hsl(var(--accent))" : "hsl(var(--chart-1))"}
+                        stroke={"hsl(var(--background))"}
                         strokeWidth={1.5}
                         />
                     );
                 }}
-                activeDot={{ r: 6, stroke: "hsl(var(--background))", strokeWidth: 2 }} // Style active dot
+                activeDot={{ r: 6, stroke: "hsl(var(--background))", strokeWidth: 2 }}
             />
-            {/* Reference line at 0m (sea level) */}
             <ReferenceLine y={0} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" />
             </AreaChart>
         </ResponsiveContainer>

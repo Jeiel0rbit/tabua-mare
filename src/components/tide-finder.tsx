@@ -310,7 +310,6 @@ export default function TideFinder() {
               <TableHeader>
                 <TableRow className="bg-muted/50">
                   <TableHead className="w-[80px] text-center"><CalendarDays className="inline-block h-4 w-4 mr-1"/> Dia</TableHead>
-                  {/* Removed Fase Lunar Header */}
                   <TableHead className="w-[100px] text-center"><Sun className="inline-block h-4 w-4 mr-1"/> Sol</TableHead>
                   <TableHead className="text-center">1ª Maré</TableHead>
                   <TableHead className="text-center">2ª Maré</TableHead>
@@ -323,7 +322,6 @@ export default function TideFinder() {
                 {scrapedData.dailyTides.map((data, index) => (
                   <TableRow key={index} className={index % 2 === 0 ? "" : "bg-secondary/30"}>
                     <TableCell className="font-medium text-center">{data.dayOfMonth}<br/><span className="text-xs text-muted-foreground">{data.dayOfWeek}</span></TableCell>
-                    {/* Removed Moon Phase Cell */}
                     <TableCell className="text-center text-xs">
                       <span className="flex items-center justify-center gap-1">
                          <Sun className="h-3 w-3 text-orange-400"/> {data.sunriseTime ?? '-'} <span className="text-muted-foreground">↑</span>
@@ -352,7 +350,7 @@ export default function TideFinder() {
              {/* Tide Chart */}
              <div className="mt-8">
                 <h3 className="text-xl font-semibold text-center mb-4">Gráfico de Marés</h3>
-                <TideChart tideData={scrapedData.dailyTides} monthYear={scrapedData.monthYearText} />
+                <TideChart tideData={scrapedData.dailyTides} monthYear={scrapedData.monthYearText} tideChartSvg={null} /> {/* Removed tideChartSvg prop */}
              </div>
           </div>
         )}
@@ -373,4 +371,3 @@ export default function TideFinder() {
     </Card>
   );
 }
-
