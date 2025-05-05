@@ -12,16 +12,34 @@ import type { TideData } from "@/services/tabua-de-mares";
 import { fetchTideDataAction } from "@/app/actions"; // Import the server action
 import { useToast } from "@/hooks/use-toast"; // Import useToast
 
-// Example list of states and cities (replace with a more comprehensive list or API call if needed)
+// Comprehensive list of Brazilian states and relevant coastal/river cities for tide data
 const locations: { [key: string]: string[] } = {
-  "Pará": ["Ananindeua", "Belém", "Salinópolis"],
-  "Maranhão": ["São Luís", "Alcântara"],
-  "Ceará": ["Fortaleza", "Jericoacoara"],
-  "Rio de Janeiro": ["Rio de Janeiro", "Niterói", "Arraial do Cabo"],
-  "São Paulo": ["Santos", "Ubatuba"],
+  "Alagoas": ["Maceió", "Maragogi", "Barra de São Miguel"],
+  "Amapá": ["Macapá", "Oiapoque", "Santana"],
+  "Amazonas": ["Manaus", "Parintins", "Itacoatiara", "Tefé"], // Major river ports
+  "Bahia": ["Salvador", "Porto Seguro", "Ilhéus", "Itacaré", "Caravelas", "Valença", "Prado"],
+  "Ceará": ["Fortaleza", "Jericoacoara", "Canoa Quebrada", "Camocim", "Icapuí", "Aracati"],
+  "Espírito Santo": ["Vitória", "Guarapari", "Vila Velha", "Aracruz", "São Mateus", "Conceição da Barra"],
+  "Maranhão": ["São Luís", "Alcântara", "Barreirinhas", "Tutóia", "Raposa"],
+  "Pará": ["Belém", "Salinópolis", "Santarém", "Marabá", "Soure", "Vigia", "Bragança", "Mosqueiro"],
+  "Paraíba": ["João Pessoa", "Cabedelo", "Pitimbu", "Baía da Traição"],
+  "Paraná": ["Paranaguá", "Guaratuba", "Matinhos", "Antonina", "Pontal do Paraná"],
+  "Pernambuco": ["Recife", "Olinda", "Porto de Galinhas", "Fernando de Noronha", "Ipojuca", "Cabo de Santo Agostinho", "Tamandaré", "Goiana"],
+  "Piauí": ["Parnaíba", "Luís Correia", "Cajueiro da Praia"],
+  "Rio de Janeiro": ["Rio de Janeiro", "Niterói", "Arraial do Cabo", "Búzios", "Angra dos Reis", "Paraty", "Macaé", "Cabo Frio", "Mangaratiba", "Sepetiba"],
+  "Rio Grande do Norte": ["Natal", "Pipa", "Mossoró", "Galinhos", "São Miguel do Gostoso", "Tibau do Sul"],
+  "Rio Grande do Sul": ["Rio Grande", "Tramandaí", "Torres", "Pelotas", "São José do Norte", "Cassino"],
+  "Rondônia": ["Porto Velho"], // Major river port
+  "Santa Catarina": ["Florianópolis", "Balneário Camboriú", "Itajaí", "São Francisco do Sul", "Imbituba", "Laguna", "Itapoá", "Bombinhas"],
+  "São Paulo": ["Santos", "Ubatuba", "Guarujá", "São Sebastião", "Ilhabela", "Cananéia", "Bertioga", "Caraguatatuba", "Iguape"],
+  "Sergipe": ["Aracaju", "Estância", "Pirambu"],
+  "Tocantins": ["Palmas"], // Capital on Palmas River (Tocantins River tributary)
+  // States generally without significant tide locations (coastal/major river):
+  // Acre, Distrito Federal, Goiás, Mato Grosso, Mato Grosso do Sul, Minas Gerais, Roraima
 };
 
-const states = Object.keys(locations);
+
+const states = Object.keys(locations).sort(); // Sort states alphabetically
 
 export default function TideFinder() {
   const [selectedState, setSelectedState] = useState<string>("");
@@ -37,25 +55,35 @@ export default function TideFinder() {
     const savedState = localStorage.getItem("selectedState");
     const savedCity = localStorage.getItem("selectedCity");
 
+    let initialState = "";
     if (savedState && locations[savedState]) {
-      setSelectedState(savedState);
-      setCities(locations[savedState]);
-      if (savedCity && locations[savedState].includes(savedCity)) {
-        setSelectedCity(savedCity);
-      }
+        initialState = savedState;
     } else if (states.length > 0) {
-        // Default to first state if nothing saved
-        const defaultState = states[0];
-        setSelectedState(defaultState);
-        setCities(locations[defaultState] || []);
+        // Default to a common coastal state like Rio de Janeiro or São Paulo if no saved state
+        initialState = states.includes("Rio de Janeiro") ? "Rio de Janeiro" : states[0];
     }
-  }, []);
+
+    if (initialState) {
+        setSelectedState(initialState);
+        const initialCities = locations[initialState] || [];
+        setCities(initialCities);
+        if (savedCity && initialCities.includes(savedCity)) {
+            setSelectedCity(savedCity);
+            // Optionally auto-fetch data if both state and city were saved
+            // handleFetchTides(initialState, savedCity); // Be mindful of initial load performance
+        } else if (initialCities.length > 0) {
+            // Optionally select the first city if only state was saved or city was invalid
+            // setSelectedCity(initialCities[0]);
+        }
+    }
+
+  }, []); // Empty dependency array ensures this runs only once on mount
 
   // Update cities when state changes and save to localStorage
   const handleStateChange = (value: string) => {
     setSelectedState(value);
     const newCities = locations[value] || [];
-    setCities(newCities);
+    setCities(newCities.sort()); // Sort cities alphabetically
     setSelectedCity(""); // Reset city when state changes
     setTideData(null); // Clear previous results
     setError(null);
@@ -76,8 +104,8 @@ export default function TideFinder() {
   };
 
   // Fetch tide data using server action
-  const handleFetchTides = () => {
-    if (!selectedState || !selectedCity) {
+  const handleFetchTides = (stateToFetch = selectedState, cityToFetch = selectedCity) => {
+    if (!stateToFetch || !cityToFetch) {
       setError("Por favor, selecione um estado e uma cidade.");
       toast({ // Add toast notification
         title: "Seleção Incompleta",
@@ -91,19 +119,19 @@ export default function TideFinder() {
 
     startTransition(async () => {
       try {
-        const data = await fetchTideDataAction(selectedState, selectedCity);
+        const data = await fetchTideDataAction(stateToFetch, cityToFetch);
         if (!data || data.length === 0) {
-          setError("Não foi possível obter os dados da maré para esta localização. O serviço pode estar indisponível ou a cidade não é suportada.");
+          setError("Não foi possível obter os dados da maré para esta localização. O serviço pode estar indisponível, a cidade não é suportada, ou não há dados para hoje.");
            toast({
             title: "Erro ao buscar dados",
-            description: "Não foi possível obter os dados da maré.",
+            description: "Não foi possível obter os dados da maré. Verifique a seleção ou tente mais tarde.",
             variant: "destructive",
           });
         } else {
           setTideData(data);
            toast({
             title: "Dados da maré carregados!",
-            description: `Tábua de marés para ${selectedCity}, ${selectedState}.`,
+            description: `Tábua de marés para ${cityToFetch}, ${stateToFetch}.`,
           });
         }
       } catch (err) {
@@ -126,7 +154,7 @@ export default function TideFinder() {
           Selecione a Localização
         </CardTitle>
          <CardDescription>
-          Escolha o estado e a cidade para ver a tábua de marés.
+          Escolha o estado e a cidade para ver a tábua de marés diária. A fonte dos dados é <a href="https://tabuademares.com/" target="_blank" rel="noopener noreferrer" className="text-primary underline hover:text-primary/80">tabuademares.com</a>.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -160,7 +188,7 @@ export default function TideFinder() {
               disabled={!selectedState || cities.length === 0}
             >
               <SelectTrigger id="city-select">
-                <SelectValue placeholder="Selecione a Cidade" />
+                <SelectValue placeholder={selectedState && cities.length === 0 ? "Nenhuma cidade relevante encontrada" : "Selecione a Cidade"} />
               </SelectTrigger>
               <SelectContent>
                 {cities.map((city) => (
@@ -174,7 +202,7 @@ export default function TideFinder() {
         </div>
 
         <Button
-            onClick={handleFetchTides}
+            onClick={() => handleFetchTides()} // Pass state/city explicitly if needed from elsewhere
             disabled={!selectedState || !selectedCity || isPending}
             className="w-full bg-primary hover:bg-primary/90"
         >
@@ -197,13 +225,13 @@ export default function TideFinder() {
         {tideData && tideData.length > 0 && (
           <div className="mt-8">
             <h2 className="mb-4 text-xl font-semibold flex items-center gap-2">
-               <Waves className="text-primary"/> Tábua de Marés para {selectedCity}, {selectedState}
+               <Waves className="text-primary"/> Tábua de Marés para {selectedCity}, {selectedState} (Hoje)
             </h2>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Hora</TableHead>
-                  <TableHead className="text-right">Altura</TableHead>
+                  <TableHead className="text-right">Altura (Metros)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -217,9 +245,14 @@ export default function TideFinder() {
             </Table>
           </div>
         )}
-         {tideData === null && !isPending && !error && selectedCity && (
+         {tideData === null && !isPending && !error && selectedState && selectedCity && (
              <div className="mt-8 text-center text-muted-foreground">
-                 Clique no botão acima para carregar os dados da maré.
+                 Clique no botão acima para carregar os dados da maré para {selectedCity}, {selectedState}.
+             </div>
+         )}
+         {tideData === null && !isPending && !error && (!selectedState || !selectedCity) && (
+             <div className="mt-8 text-center text-muted-foreground">
+                 Selecione um estado e uma cidade para buscar a tábua de marés.
              </div>
          )}
       </CardContent>
